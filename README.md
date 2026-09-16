@@ -1,0 +1,174 @@
+# NaadCore — Linux-Native Harmonium Synthesizer
+
+NaadCore is a modular, plugin-based synthesizer framework for Linux. The harmonium
+sound is delivered by the `harmonium` plugin (built on FluidSynth), loaded at runtime
+by the `naadcore-cli` application.
+
+```
+Alesis Q49 (USB MIDI, ALSA 20:0)
+        ↓
+ALSA sequencer
+        ↓
+naadcore-cli (MIDI input, event routing)
+        ↓
+PluginManager → libharmonium_plugin.so (INaadPlugin)
+        ↓
+Embedded FluidSynth + harmonium.sf2
+        ↓
+ALSA audio → speakers
+```
+
+**Success criterion:** Press a key on the Q49 → hear the harmonium.
+
+## Build
+
+Requires: g++, CMake ≥ 3.16, FluidSynth ≥ 2.0, ALSA dev packages.
+
+```bash
+sudo apt install g++ cmake libfluidsynth-dev libasound2-dev
+```
+
+From the project root:
+
+```bash
+cd /home/nil/Projects/Personal/naadcore
+cmake -B build
+cmake --build build -j4
+```
+
+This builds exactly three targets:
+
+| Target | Output |
+|---|---|
+| `naadcore_core` | `build/libnaadcore_core.so` (shared core library) |
+| `harmonium_plugin` | `build/plugins/libharmonium_plugin.so` |
+| `naadcore-cli` | `build/apps/naadcore-cli/naadcore-cli` |
+
+## Run
+
+From the project root:
+
+```bash
+./build/apps/naadcore-cli/naadcore-cli --plugin ./build/plugins/libharmonium_plugin.so --midi 20:0
+```
+
+Expected output:
+
+```
+Loading plugin: ./build/plugins/libharmonium_plugin.so
+Loaded SoundFont: /home/nil/harmonium-companion/harmonium.sf2 (ID: 1)
+Loaded plugin: harmonium v1.0.0 (./build/plugins/libharmonium_plugin.so)
+Plugin: harmonium v1.0.0
+Starting audio...
+Audio driver started: alsa
+MIDI input connected: 20:0 -> 129:0
+Ready. Press Ctrl+C to exit.
+Listening for MIDI from 20:0
+```
+
+(FluidSynth may emit a few harmless warnings — see "Harmless warnings" below.)
+
+Press Ctrl+C to exit. For scripted/foreground runs always wrap in `timeout`, e.g.:
+
+```bash
+timeout 5 ./build/apps/naadcore-cli/naadcore-cli --plugin ./build/plugins/libharmonium_plugin.so --midi 20:0
+```
+
+### CLI options
+
+```
+--plugin <path>       Path to plugin shared library (.so) (required)
+--midi <client:port>  ALSA sequencer client:port for MIDI input (e.g. 20:0)
+--audio-driver <name> Audio driver: alsa, pipewire, pulseaudio (default: alsa)
+--help                Show this help message
+```
+
+There is no `--soundfont` flag: SoundFonts are embedded in plugins at build time.
+
+### SoundFont embedding
+
+The harmonium plugin does not load a SoundFont from the command line. The path is
+compiled into the plugin via `HARMONIUM_SOUNDFONT_PATH` in
+`plugins/harmonium/CMakeLists.txt`. The default is
+`/home/nil/harmonium-companion/harmonium.sf2`; override it at configure time:
+
+```bash
+cmake -B build -DHARMONIUM_SOUNDFONT_PATH=/path/to/other.sf2
+cmake --build build -j4
+```
+
+## Verify the MIDI connection
+
+The CLI registers with ALSA as client `naadcore` and subscribes to the Q49
+automatically. In another terminal:
+
+```bash
+aconnect -l
+```
+
+You should see:
+
+```
+client 20: 'Q49' [type=kernel,card=1]
+    0 'Q49 MIDI 1      '
+client 129: 'naadcore' [type=user,pid=...]
+    0 'naadcore input  '
+        Connected From: 20:0
+```
+
+(If the subscription is missing, connect manually: `aconnect 20:0 129:0`.)
+
+Play the Q49: soft keys → quiet sound, hard keys → loud sound (velocity works),
+chords → polyphony works, release → sound stops.
+
+## Harmless warnings (safe to ignore)
+
+- FluidSynth `SDL3`-related messages on startup
+- GLib `g_param_spec` CRITICALs from FluidSynth
+- `No preset found on channel 9` (channel 9 = GM percussion; unused here)
+- `Failed to set thread to high priority`
+
+## Troubleshooting
+
+1. Kill stale instances: `pkill -f naadcore-cli`
+2. Try another audio driver: `--audio-driver pipewire` (or `pulseaudio`)
+3. Check the subscription: `aconnect -l` must show `Connected From: 20:0` on the
+   `naadcore input` port
+4. Verify the Q49 is sending: `aseqdump -p 20:0` while pressing keys
+5. Send a note by hand (this system's `aseqsend` uses positional hex syntax):
+   `aseqsend -p 129:0 "90 60 100"` (note on) and `aseqsend -p 129:0 "80 60 0"` (note off)
+
+## Project structure
+
+```
+naadcore/
+├── CMakeLists.txt                  # Root build: naadcore_core, naadcore-cli, harmonium_plugin
+├── include/naadcore/               # Public headers (canonical)
+│   ├── plugin.hpp                  # INaadPlugin interface, MidiEvent, PluginInfo, PluginResult
+│   ├── plugin_manager.hpp          # PluginManager singleton
+│   └── midi.hpp                    # MidiInput + Synthesizer declarations
+├── core/                           # Core library sources
+│   ├── midi.cpp                    # MidiInput (ALSA) + Synthesizer (FluidSynth wrapper)
+│   └── plugin_manager.cpp          # PluginManager implementation (dlopen/dlsym)
+├── apps/naadcore-cli/              # CLI application
+│   ├── CMakeLists.txt
+│   └── main.cpp                    # Plugin loader + MIDI routing main loop
+├── plugins/harmonium/              # Harmonium plugin (reference implementation)
+│   ├── CMakeLists.txt              # Embeds HARMONIUM_SOUNDFONT_PATH
+│   ├── harmonium_plugin.hpp
+│   └── harmonium_plugin.cpp        # Embedded FluidSynth synth, exports C factory functions
+└── docs/                           # Architecture and plugin-system documentation
+```
+
+## Documentation
+
+- `HANDOVER.md` — authoritative handover / current state
+- `docs/NAADCORE_ARCHITECTURE.md` — system architecture
+- `docs/PLUGIN_SYSTEM.md` — plugin system overview
+- `docs/PLUGIN_DEVELOPMENT.md` — how to write a new plugin
+- `docs/PLUGIN_SYSTEM_IMPLEMENTATION.md` — plugin system implementation notes
+- `docs/NAADCORE_MVP_CHALLENGE.md` — historical MVP record (completed)
+
+## License
+
+MIT License (to be determined)
