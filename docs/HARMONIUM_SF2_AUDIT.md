@@ -28,6 +28,26 @@
 > Plugin side: `stop` config key maps single→preset 0, double→preset 1;
 > PROGRAM_CHANGE events are ignored (see HANDOVER.md "Reed stops").
 > The high-register stretch below remains open for Phase 7.
+>
+> **Phase 6 disposition (2026-09-19):** the key-click/chiff layer is
+> addressed by the derived font `plugins/harmonium/soundfonts/harmonium_v3.sf2`
+> (also from `tests/scripts/derive_sf2.py`, `--click` flag): everything v2
+> has (presets 0/1, verified **byte-identical** T1 render vs v2 at preset 0)
+> PLUS a synthesized 882-frame (40 ms @ 22050 Hz mono 16-bit) "KeyClick"
+> sample appended to sdta (brown-noise burst, FFT-bandpassed 700–4000 Hz,
+> −8 dBFS peak, 2/15 ms fades; sample data IS duplicated — +1934 bytes
+> total file growth) and a preset 2 "key click" (bank 0, prog 2) backed by
+> a one-zone instrument (keys 21–108, keynum=60 for a fixed playback rate,
+> NO loop) with a SELF-ENDING volume envelope: attack 1 ms / hold 0 /
+> decay 40 ms / sustain 1000 cB (100 dB attenuation = fully closed —
+> sustainVolEnv is an attenuation, 0 would hold the click forever) /
+> release 15 ms. Verified: the voice ends ≤21 ms after onset (decay to
+> −80 dB) and the 4 s hold that follows is digital silence — a
+> self-sustaining click would be a permanent drone. v2 is preserved
+> unmodified for comparability. The CMake default font is v3; with a font
+> lacking preset 2 the plugin's click layer is a silent no-op
+> (`click_preset_ok_` guard). See HANDOVER.md "Key click + micro-variation"
+> and tests/RESULTS.md Phase 6.
 
 Audit of `/home/nil/harmonium-companion/harmonium.sf2` (the SoundFont
 compiled into the harmonium plugin via `HARMONIUM_SOUNDFONT_PATH`).

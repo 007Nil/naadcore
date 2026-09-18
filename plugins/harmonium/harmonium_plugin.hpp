@@ -3,6 +3,7 @@
 
 #include "naadcore/plugin.hpp"
 #include <fluidsynth.h>
+#include <random>
 #include <string>
 #include <memory>
 #include <vector>
@@ -73,9 +74,10 @@ private:
     //   channel 14 = sub-octave      (note - 12, quieter still)
     // Channel 7 (volume) on the internal channels IS their gain knob, so
     // incoming CC 7 is never mirrored to them; CC 11 (expression) and
-    // pitch bend are mirrored to active layers. Channels 14/15 are thus
-    // RESERVED: MIDI input arriving on them from a controller would
-    // collide with the layer router.
+    // pitch bend are mirrored to active layers. Channels 12-15 are thus
+    // RESERVED (15 coupler, 14 sub-octave, 13 drone, 12 key click):
+    // MIDI input arriving on them from a controller would collide with
+    // the layer router / drone / click layer.
     static constexpr uint8_t kLayerCoupler = 0x1;   ///< HeldNote.layers bit
     static constexpr uint8_t kLayerSubOctave = 0x2; ///< HeldNote.layers bit
     static constexpr int kCouplerChannel = 15;
@@ -128,6 +130,61 @@ private:
     /// 0..127, sent as CC 7 on channel 13 (drone_level key).
     int drone_level_ = kDroneCC7;
 
+    // Key click / chiff (Phase 6). A real harmonium's key makes a faint
+    // mechanical noise as the pallet opens. The derived font v3 carries a
+    // SELF-ENDING click instrument (preset 2) — the voice dies <= 60 ms
+    // after onset via its envelope + end-of-sample data, so NO noteoff
+    // tracking is needed. It lives on internal channel 12 (reservation
+    // order is now 15 coupler, 14 sub-octave, 13 drone, 12 click), plays
+    // ONLY on accepted main-path NoteOns (never for drone changes and
+    // never for a swallowed duplicate NoteOn — a swallowed duplicate means
+    // no pallet moves, so no click), is NOT in held_notes_ (no bellows
+    // state), and is NOT mirrored bend/CC11 (a mechanical noise does not
+    // track expression). Level = fixed CC 7 below x velocity from the
+    // key_click mode ("low"/"high"); the self-ending envelope does the rest.
+    static constexpr int kClickChannel = 12;
+    static constexpr int kClickPreset = 2;
+    /// Fixed channel gain for the click layer (CC 7 on channel 12 IS its
+    /// gain knob, like the layer gains — never mirrored from MIDI input).
+    static constexpr int kClickCC7 = 64;
+    /// key_click=low / key_click=high trigger velocities (faint transient;
+    /// final constants tuned against plugin-in-loop renders, see
+    /// tests/RESULTS.md Phase 6 for the measured transient levels).
+    static constexpr uint8_t kClickVelLow = 45;
+    static constexpr uint8_t kClickVelHigh = 75;
+    /// "off" (default) | "low" | "high". Stored pre-init, consulted per
+    /// NoteOn, so a live toggle applies from the next accepted NoteOn.
+    std::string key_click_ = "off";
+    /// True only after the click preset was successfully selected on
+    /// channel 12. A font without preset 2 (e.g. harmonium_v2.sf2) fails
+    /// the selection; trigger_click() then stays a no-op — otherwise the
+    /// channel would fall back to the stop preset and key_click would
+    /// stack a quiet duplicate reed voice on every note.
+    bool click_preset_ok_ = false;
+
+    // Per-note micro-variation (Phase 6). A deterministic PRNG (FIXED seed
+    // — determinism keeps offline renders byte-reproducible) jitters the
+    // velocity handed to FluidSynth on every accepted NoteOn: +-1..3 on
+    // the main/layers' bellows velocity, +-4..8 on the click velocity.
+    // The jitter perturbs ONLY the played velocity — the bellows reference
+    // latch / baton-pass bookkeeping stays EXACT (reference_velocity_ and
+    // HeldNote.velocity hold raw press velocities). Audible effect: +-1..3
+    // is imperceptible dynamically (well under 0.5 dB) but defeats
+    // sample-identical repeats of the same key.
+    static constexpr uint32_t kVariationSeed = 20260919u;
+    static constexpr int kJitterMain = 3;   ///< +-1..kMain on main/layers
+    static constexpr int kJitterClick = 8;  ///< +-1..kClick on click layer
+    /// "on" (default) | "off"; off = exact velocities (byte-comparable
+    /// regression against Phase 5).
+    bool variation_on_ = true;
+    std::mt19937 rng_{kVariationSeed};
+    /// Last jitter draws (main / click). The anti-repeat rule redraws
+    /// while equal to the previous draw, so two consecutive notes never
+    /// get the same variation (bounded to a few redraws; |j| >= 1 > 0, so
+    /// the initial 0 can never match).
+    int last_main_jitter_ = 0;
+    int last_click_jitter_ = 0;
+
     // Uniform bellows velocity: a real harmonium's bellows drive all open
     // reeds at the same pressure, so keys pressed together sound at the
     // first key's velocity. Each held key remembers its original press
@@ -137,9 +194,10 @@ private:
     // state ignores MIDI channel (one harmonium, one bellows).
     struct HeldNote {
         uint8_t note;
-        uint8_t velocity;             ///< original press velocity
+        uint8_t velocity;             ///< original press velocity (raw, bellows bookkeeping)
         uint8_t channel;              ///< incoming channel of the main voice
-        uint8_t sounding_velocity;    ///< velocity actually played (reference at press time)
+        uint8_t sounding_velocity;    ///< bellows reference at press time (exact)
+        uint8_t played_velocity;      ///< sounding_velocity after variation jitter (what FluidSynth heard)
         uint8_t layers;               ///< kLayer* bits: internal voices started for this note
     };
     std::vector<HeldNote> held_notes_;  ///< front() = oldest pressed
@@ -211,6 +269,27 @@ private:
     /// Send drone_level_ as CC 7 on channel 13 — the drone's gain knob
     /// (no-op before init; called at init and on live changes).
     void apply_drone_level();
+
+    /// program_select the key-click preset (2) on internal channel 12.
+    /// apply_stop() re-programmes ALL channels (including 12) to the stop
+    /// preset, so this must run after every apply_stop() — at init and on
+    /// live stop changes. A font without preset 2 (e.g. harmonium_v2.sf2)
+    /// fails the selection gracefully: key_click then simply stays silent.
+    void apply_click_preset();
+
+    /// Jitter a velocity by a random magnitude in 1..max_jitter with a
+    /// random sign (never zero — a varied note never plays at the exact
+    /// input velocity), clamped to 1..127. Anti-repeat: redraws (bounded)
+    /// while the draw equals last_jitter, so consecutive notes never get
+    /// the same variation. Deterministic: uses the fixed-seed mt19937
+    /// stream. ONLY the value handed to FluidSynth is perturbed; bellows
+    /// bookkeeping uses the raw velocities.
+    uint8_t jitter_velocity(int velocity, int max_jitter, int& last_jitter);
+
+    /// Trigger the key-click voice on channel 12 (key_click mode -> base
+    /// velocity, +-kJitterClick variation). Fire-and-forget: the click
+    /// preset's envelope self-ends the voice, no noteoff tracking.
+    void trigger_click(uint8_t note);
 };
 
 } // namespace naadcore

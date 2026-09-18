@@ -70,7 +70,7 @@ Expected output:
 
 ```
 Loading plugin: ./build/plugins/libharmonium_plugin.so
-Loaded SoundFont: .../plugins/harmonium/soundfonts/harmonium_v2.sf2 (ID: 1)
+Loaded SoundFont: .../plugins/harmonium/soundfonts/harmonium_v3.sf2 (ID: 1)
 Loaded plugin: harmonium v1.0.0 (./build/plugins/libharmonium_plugin.so)
 Plugin: harmonium v1.0.0
 Starting audio...
@@ -104,9 +104,11 @@ There is no `--soundfont` flag: SoundFonts are embedded in plugins at build time
 The harmonium plugin does not load a SoundFont from the command line. The path is
 compiled into the plugin via `HARMONIUM_SOUNDFONT_PATH` in
 `plugins/harmonium/CMakeLists.txt`. The default is the in-repo derived font
-`plugins/harmonium/soundfonts/harmonium_v2.sf2` (preset 0 "harmonium" —
-identical to the original font — and preset 1 "harmonium double", the Phase 3
-detuned 2-reed stop; see HANDOVER.md "Reed stops"); override it at configure
+`plugins/harmonium/soundfonts/harmonium_v3.sf2` (preset 0 "harmonium" —
+identical to the original font — preset 1 "harmonium double", the Phase 3
+detuned 2-reed stop, and preset 2 "key click", the Phase 6 self-ending
+chiff layer; see HANDOVER.md "Reed stops" and "Key click + micro-variation");
+override it at configure
 time (e.g. back to the original font):
 
 ```bash

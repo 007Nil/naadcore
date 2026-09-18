@@ -1,29 +1,44 @@
 # NaadCore Handover — Authoritative State Document
 
-Last updated: 2026-09-19 (harmonium realism Phase 5: drone (unpika) on
-internal channel 13 — config-controlled fixture notes ("drone" key:
-"off" or up to 8 comma-separated MIDI note numbers) that sound continuously
-under the melody, never touch the bellows model, start at fixed velocity 100
-with their loudness from the `drone_level` key (CC 7 on ch13, default 45,
-measured ≈11–14 dB under the melody fundamental), live add/remove semantics
-(start new / release removed / keep unchanged), NOT cleared-and-forgotten by
-CC 123 (voices silenced, spec kept — re-set restarts), no pitch-bend/CC11
-mirroring; channels 13/14/15 now all reserved; authoritative config-key
-registry created at docs/HARMONIUM_CONFIG.md; 213/213 config tests; see
-"Drone (Phase 5)" below. Phases 0–4 unchanged: synth voicing pinned in
-plugin — gain/reverb/chorus defaults + live config keys; runtime envelope
-shaping — attack_ms/release_ms live config keys via FluidSynth channel
-generators; reed stops — `stop` config key (single/double) selecting presets
-in the in-repo derived font plugins/harmonium/soundfonts/harmonium_v2.sf2,
-PROGRAM_CHANGE events ignored; layer router — octave coupler on internal
-channel 15 (note+12, ~6–8 dB below main, +3¢ detuned) and sub-octave on
-channel 14 (note−12, ~11–14 dB below main), `coupler` / `sub_octave` live
-config keys with mid-phrase toggling while notes are held; pitch bend +
-CC 11 mirrored to layers, CC 7 deliberately NOT mirrored (it IS the layer
-gain); duplicate NoteOn on a held key now IGNORED (no re-attack — audible
-change from Phase ≤3); CC 123 hardened to all_notes_off on ALL 16 channels
-plus drone reset; cross-channel NoteOff releases voices on the note's
-original channel; uniform bellows velocity model (held_notes_ vector,
+Last updated: 2026-09-19 (harmonium realism Phase 6: key-click/chiff layer +
+per-note micro-variation — the polish phase. Derived font
+plugins/harmonium/soundfonts/harmonium_v3.sf2 (now the CMake default) adds a
+synthesized 40 ms key-noise "KeyClick" sample and preset 2 "key click" — a
+SELF-ENDING click instrument (attack 1 ms / decay 40 ms / sustain fully
+closed; the voice dies ≤21 ms after onset, proven by render — a
+self-sustaining click would be a permanent drone); preset 0 is byte-identical
+to v2 (T1 render compared). The plugin triggers the click on internal channel
+12 on every ACCEPTED main-path NoteOn (never for drone changes, never for a
+swallowed duplicate NoteOn — no pallet moved, no click), controlled by the
+`key_click` config key ("off" default / "low"=vel 45 / "high"=vel 75, CC 7=64
+on ch12); micro-variation via the `variation` key ("on" default / "off"):
+a fixed-seed mt19937 (seed 20260919) jitters only the velocity handed to
+FluidSynth (±1..3 main, ±4..8 click, anti-repeat so consecutive notes never
+coincide) — the bellows reference/baton bookkeeping stays exact, off is
+byte-comparable against Phase 5; variation=on defeats sample-identical
+repeats (measured ±0.1–0.6 dB per note, adjacent repeats never identical,
+deterministic across runs to 0.000 dB). Channel reservation is now
+15 coupler / 14 sub-octave / 13 drone / 12 click. 267/267 config tests;
+authoritative config-key registry at docs/HARMONIUM_CONFIG.md; see
+"Key click + micro-variation (Phase 6)" below. Phases 0–5 unchanged: synth
+voicing pinned in plugin — gain/reverb/chorus defaults + live config keys;
+runtime envelope shaping — attack_ms/release_ms live config keys via
+FluidSynth channel generators; reed stops — `stop` config key (single/double)
+selecting presets in the in-repo derived fonts, PROGRAM_CHANGE events
+ignored; layer router — octave coupler on internal channel 15 (note+12,
+~6–8 dB below main, +3¢ detuned) and sub-octave on channel 14 (note−12,
+~11–14 dB below main), `coupler` / `sub_octave` live config keys with
+mid-phrase toggling while notes are held; drone (unpika) on internal channel
+13 — config-controlled fixture notes (`drone` key: "off" or up to 8
+comma-separated MIDI note numbers) sounding continuously under the melody,
+never touching the bellows model, fixed velocity 100 with loudness from
+`drone_level` (CC 7 on ch13, default 45, measured ≈11–14 dB under the melody
+fundamental), live add/remove semantics, not cleared-and-forgotten by CC 123,
+no pitch-bend/CC11 mirroring; pitch bend + CC 11 mirrored to coupler/sub only,
+CC 7 deliberately NOT mirrored (it IS the layer gain); duplicate NoteOn on a
+held key IGNORED (no re-attack); CC 123 hardened to all_notes_off on ALL 16
+channels plus drone reset; cross-channel NoteOff releases voices on the
+note's original channel; uniform bellows velocity model (held_notes_ vector,
 reference_velocity_ latch/baton-pass); plugin-in-loop offline renderer with
 KEY=VALUE config overrides; test harness under tests/; SF2 audited — see
 docs/HARMONIUM_SF2_AUDIT.md; `--audio-driver` CLI flag wired through;
@@ -57,7 +72,7 @@ libharmonium_plugin.so (plugins/harmonium/)
   - SoundFont path compiled in (embedded at build time; default is the
     in-repo derived font, see "Reed stops (Phase 3)")
         ↓
-FluidSynth + plugins/harmonium/soundfonts/harmonium_v2.sf2 → ALSA audio → speakers
+FluidSynth + plugins/harmonium/soundfonts/harmonium_v3.sf2 → ALSA audio → speakers
 ```
 
 The CLI registers with ALSA under the client name **`naadcore`** and creates a
@@ -90,11 +105,15 @@ naadcore/
 │   ├── README.md                   # Plugin directory overview
 │   └── harmonium/                   # Plugin target: harmonium_plugin
 │       ├── CMakeLists.txt          # Embeds HARMONIUM_SOUNDFONT_PATH (default:
-│       │                           #   in-repo harmonium_v2.sf2), outputs to build/plugins/
+│       │                           #   in-repo harmonium_v3.sf2), outputs to build/plugins/
 │       ├── soundfonts/
-│       │   └── harmonium_v2.sf2    # Derived font (Phase 3, committed): preset 0
-│       │                           #   "harmonium" (byte-identical to the original)
-│       │                           #   + preset 1 "harmonium double" (+4¢ zones)
+│       │   ├── harmonium_v3.sf2    # Derived font (Phase 6, committed, DEFAULT):
+│       │   │                       #   presets 0 "harmonium" (byte-identical to
+│       │   │                       #   the original) + 1 "harmonium double"
+│       │   │                       #   (+4¢ zones) + 2 "key click" (self-ending
+│       │   │                       #   chiff instrument + synthesized sample)
+│       │   └── harmonium_v2.sf2    # Derived font (Phase 3, committed, kept for
+│       │                           #   comparability): presets 0/1 only
 │       ├── harmonium_plugin.hpp
 │       └── harmonium_plugin.cpp     # FluidSynth plugin + extern "C" factories
 ├── tests/                          # Realism test harness (re-added with content)
@@ -106,7 +125,8 @@ naadcore/
 │   │                               #   Phase 3/4/5 probe tracks
 │   ├── scripts/                    # gen_midi.py, render_sf2.sh, capture_live.sh,
 │   │                               #   render_plugin.cpp, run_render_plugin.sh,
-│   │                               #   derive_sf2.py (Phase 3 SF2 surgery),
+│   │                               #   derive_sf2.py (Phase 3/6 SF2 surgery:
+│   │                               #   --click builds harmonium_v3.sf2),
 │   │                               #   am_spectrum.py (AM-band spectrum),
 │   │                               #   gen_probes_phase4.py (T10/T11),
 │   │                               #   gen_probes_phase5.py (T12/T13), ...
@@ -173,9 +193,10 @@ Expected console output (order may vary slightly):
 Loading plugin: ./build/plugins/libharmonium_plugin.so
 Synth voicing: gain=0.4 reverb=on chorus=off interp=4th-order
 Synth envelope: attack_ms=10 release_ms=200
-Loaded SoundFont: /home/nil/Projects/Personal/naadcore/plugins/harmonium/soundfonts/harmonium_v2.sf2 (ID: 1)
+Loaded SoundFont: /home/nil/Projects/Personal/naadcore/plugins/harmonium/soundfonts/harmonium_v3.sf2 (ID: 1)
 Synth stop: single
 Synth layers: coupler=off sub_octave=off (ch15=note+12 CC7=60, ch14=note-12 CC7=40)
+Synth click: key_click=off variation=on (ch12 preset 2 CC7=64, vel low/high=45/75, jitter main +-1..3 click +-1..8, seed 20260919)
 Synth drone: off (ch13 CC7=45 vel=100)
 Loaded plugin: harmonium v1.0.0 (./build/plugins/libharmonium_plugin.so)
 Plugin: harmonium v1.0.0
@@ -257,11 +278,13 @@ The harmonium plugin has no runtime SoundFont flag. The path is baked in at
 compile time:
 
 - `plugins/harmonium/CMakeLists.txt` sets the CMake variable
-  `HARMONIUM_SOUNDFONT_PATH` (default since Phase 3:
-  `${CMAKE_SOURCE_DIR}/plugins/harmonium/soundfonts/harmonium_v2.sf2` —
-  the in-repo derived font, portable across machines; the original
-  machine-specific `/home/nil/harmonium-companion/harmonium.sf2` remains
-  available via `-D` override)
+  `HARMONIUM_SOUNDFONT_PATH` (default since Phase 6:
+  `${CMAKE_SOURCE_DIR}/plugins/harmonium/soundfonts/harmonium_v3.sf2` —
+  the in-repo derived font with the click preset, portable across
+  machines; the Phase 3 font harmonium_v2.sf2 stays committed for
+  comparability; the original machine-specific
+  `/home/nil/harmonium-companion/harmonium.sf2` remains available via
+  `-D` override)
   and passes it as a `target_compile_definitions(... PRIVATE)` preprocessor macro.
 - `harmonium_plugin.cpp` has a `#ifndef HARMONIUM_SOUNDFONT_PATH` fallback with
   the same path, then loads it via `fluid_synth_sfload()` during `init()`.
@@ -346,6 +369,8 @@ Live config keys (via `set_config`/`get_config`, no CLI surface yet):
 | `sub_octave` | on/off | sub-octave layer (Phase 4) |
 | `drone` | off / note list | drone fixture on channel 13 (Phase 5) |
 | `drone_level` | int 0–127 | drone gain, CC 7 on channel 13 (Phase 5) |
+| `key_click` | off/low/high | key-click/chiff layer on channel 12 (Phase 6) |
+| `variation` | on/off | per-note velocity micro-variation (Phase 6) |
 
 Plus the pre-existing keys: `soundfont_path`, `audio_driver`.
 
@@ -353,7 +378,7 @@ Plus the pre-existing keys: `soundfont_path`, `audio_driver`.
 semantics, echo behavior, invalid-input behavior, FluidSynth mechanism) now
 lives in **docs/HARMONIUM_CONFIG.md** — consult that registry first.
 
-Verified: 96/96 config-seam checks at the time (now 213/213 — see
+Verified: 96/96 config-seam checks at the time (now 267/267 — see
 tests/RESULTS.md; `tests/scripts/run_config_tests.sh`); live capture peak
 level matches the offline render exactly (−25.7 dBFS for note 60 @ vel 100).
 
@@ -469,10 +494,10 @@ defaults to the in-repo derived font (`HARMONIUM_SOUNDFONT` env overrides).
 
 The plugin routes each held note to up to three FluidSynth voices: the main
 voice on the incoming channel, plus optional fixed internal layers, all on
-the current `stop` preset. Channels 13/14/15 are RESERVED for the router and
-drone — MIDI input arriving on them from a controller will collide with
-layer/drone voices (the Q49 sends on one channel only; document any
-multi-channel controller use).
+the current `stop` preset. Channels 12/13/14/15 are RESERVED for the router,
+drone and click layer — MIDI input arriving on them from a controller will
+collide with layer/drone/click voices (the Q49 sends on one channel only;
+document any multi-channel controller use).
 
 | Layer | Internal channel | Pitch | Gain (measured vs main voice) | Config key |
 |---|---|---|---|---|
@@ -543,11 +568,12 @@ untouched by drone state, and drone voices are invisible to the duplicate
 NoteOn / baton-pass logic).
 
 **Channel 13.** The drone lives on internal FluidSynth channel 13 — the
-descending reservation is now 15 coupler, 14 sub-octave, 13 drone. It plays
+descending reservation is now 15 coupler, 14 sub-octave, 13 drone, 12 key
+click (Phase 6). It plays
 the current `stop` preset (`apply_stop()` loops all channels, so a stop
 change re-programmes ch13 too; the drone's CC 7 gain is re-asserted
-alongside the layer gains). **Channels 13/14/15 are all RESERVED**: MIDI
-input on ch13 collides with drone voices (same caveat as 14/15).
+alongside the layer gains). **Channels 12/13/14/15 are all RESERVED**: MIDI
+input on ch13 collides with drone voices (same caveat as 12/14/15).
 
 **`drone` config key.** `"off"` (default) or 1–8 comma-separated MIDI note
 numbers, e.g. `"48,55"` (Sa+Pa). Strict parsing: digits only — no
@@ -605,6 +631,123 @@ Log line: `Synth drone: <spec> (ch13 CC7=<level> vel=100)`.
 now documented authoritatively in **docs/HARMONIUM_CONFIG.md** —
 type/format, default, valid range, when it applies, `get_config` echo,
 invalid-input behavior, and the backing FluidSynth mechanism.
+
+## Key click + micro-variation (Phase 6, 2026-09-19)
+
+The polish phase: a faint mechanical key noise (chiff) when a pallet opens,
+and tiny per-note velocity variation so repeated keys never sound
+sample-identical. Defaults keep the Phase 5 sound: `key_click` defaults to
+**off** (no audible change unless enabled) and `variation` defaults to
+**on** (±1–3 velocity jitter — imperceptible dynamically, but defeats
+sample-identical repeats; `variation=off` renders byte-comparable with
+Phase 5 behavior).
+
+**Click instrument in the derived font v3.**
+`plugins/harmonium/soundfonts/harmonium_v3.sf2` (CMake default; generated by
+`tests/scripts/derive_sf2.py --click`, regenerable) = everything v2 has
+(presets 0/1; preset 0 proven **byte-identical** to v2 by a T1 render
+comparison through the deterministic fluidsynth CLI) PLUS:
+
+- a synthesized "KeyClick" sample appended to sdta: 882 frames (40 ms @
+  22050 Hz mono 16-bit, matching the font) — a deterministic brown-noise
+  burst (fixed seed; numpy cumsum white noise, detrended), FFT-bandpassed
+  700–4000 Hz with raised-cosine edges (sox is unavailable on this machine),
+  peak −8 dBFS, 2 ms/15 ms fades. All parameters are module constants in
+  `derive_sf2.py`; an audition WAV is written to /tmp/opencode for ear-proxy.
+- preset 2 "key click" (bank 0, prog 2) → a one-zone instrument (keys
+  21–108 — the click is unpitched mechanical noise; keynum=60 (gen 46)
+  fixes the playback rate on every key; NO loop) with a SELF-ENDING volume
+  envelope: attackVolEnv 1 ms, holdVolEnv ~0 (−32768 tc), decayVolEnv
+  40 ms, sustainVolEnv **1000 cB = 100 dB attenuation = fully closed**,
+  releaseVolEnv 15 ms.
+- **Self-end design (the critical correctness point):** sustainVolEnv is an
+  *attenuation* (0 = hold full level forever, higher = quieter), so the
+  voice must DECAY to a silent sustain: the envelope reaches 100 dB down
+  1 + 0 + 40 ms after onset, and the unlooped 40 ms sample runs out of data
+  at the same time — either mechanism ends the voice ≤60 ms. Measured: the
+  burst is audible 502→521 ms after onset at full velocity (≤21 ms, ≪60 ms)
+  and the following 4 s hold is s16 digital silence (−90.3 dBFS floor) — a
+  self-sustaining click would have been a permanent drone.
+
+**Channel 12 + triggering.** The click layer lives on internal channel 12
+(reservation order now 15 coupler, 14 sub-octave, 13 drone, 12 click), plays
+preset 2 regardless of the stop preset, and gets a fixed gain CC 7 = 64.
+`apply_click_preset()` re-selects preset 2 on ch12 after every
+`apply_stop()` (which re-programmes ALL channels), and the channel gains are
+asserted AFTER the preset selections (a FAILED program_select — v2 font —
+resets the channel's CC 7). `trigger_click()` fires on every ACCEPTED
+main-path NoteOn only: drone changes never reach that path (no click), and a
+swallowed duplicate NoteOn makes NO click (correct: no pallet moves — proven
+by T10 renders with click on: exactly two segments, none at the duplicate
+instants). The click is NOT in `held_notes_` (no bellows state) and needs no
+noteoff tracking (self-ending envelope). CC 123 simply cuts a sounding click
+short (all_notes_off covers ch12; there is no click state to clear). Pitch
+bend / CC 11 are deliberately NOT mirrored to ch12 (mechanical noise does
+not track expression). **Font guard:** the layer is only armed if preset 2
+was actually selected (`click_preset_ok_`); with harmonium_v2.sf2 key_click
+is a silent no-op (verified bit-exact vs the plain render) — otherwise the
+channel would fall back to the stop preset and stack a quiet duplicate reed
+voice on every note.
+
+**`key_click` config key.** `"off"` (default) | `"low"` | `"high"`, strict
+validation, pre-init storage OK, live toggle applies from the next accepted
+NoteOn. Map: low → click velocity 45, high → 75 (`kClickVelLow` /
+`kClickVelHigh`). Measured levels (deterministic fluidsynth CLI renders,
+reverb off, gain 0.4 — the exact calls the plugin makes: ch12 CC7=64,
+preset 2):
+
+| Mode | Click peak | vs reed onset peak | Active above −70 dBFS |
+|---|---|---|---|
+| low (vel 45) | −51.5 dBFS | **24.4 dB below** | 3.8–11.7 ms |
+| high (vel 75) | −42.6 dBFS | **15.4 dB below** | 3.7–15.7 ms |
+
+"low" is the subtle keyboard chirp; "high" is a clearly audible tick.
+Time-domain subtraction (click render minus reed-only render, sample-exact
+because the CLI renderer is byte-deterministic) also proves the reed voice
+is bit-identical with/without the click (residual after 60 ms = −240 dBFS,
+i.e. exact zero) — the click never leaks into the sustain.
+
+**`variation` config key.** `"on"` (default) | `"off"`, strict validation.
+When on, a deterministic PRNG (`std::mt19937`, FIXED seed 20260919 =
+`kVariationSeed`) jitters ONLY the velocity handed to FluidSynth: ±1..3 on
+the main/layers' bellows velocity (`kJitterMain`), ±4..8 on the click
+velocity (`kJitterClick`), with an anti-repeat rule (redraws, bounded,
+while equal to the previous draw — consecutive notes never get the same
+variation). Clamped 1..127. **The bellows model is untouched:** the
+reference latch (`reference_velocity_`) and baton-pass bookkeeping use the
+RAW press velocities (`HeldNote.velocity`); `HeldNote.played_velocity`
+(jittered) is only what FluidSynth hears, and mid-phrase layer toggles
+replay the same stored jittered velocity (one finger noise per press).
+Audible effect: ±1–3 is imperceptible dynamically (~0.2 dB per velocity
+unit at vel 100) but repeated keys are no longer sample-identical.
+Measured (T4, 10 consecutive note-60 repeats, per-note segment peaks):
+variation=off → all 10 peaks identical to 0.00 dB (Phase 5 behavior);
+variation=on → every note −0.30..+0.60 dB from the reference, adjacent
+repeats differ 0.20–1.10 dB (never identical). **Determinism:** two renders
+of the same config give the same per-note pattern to 0.000 dB (the raw
+files still differ in event-to-block placement because the plugin-in-loop
+renderer is wall-clock throttled — that is renderer placement jitter, not
+plugin nondeterminism; the deterministic fluidsynth CLI renders ARE
+byte-identical run-to-run and were used for the click measurements).
+Note: the click jitter consumes PRNG draws, so identical CONFIG (not
+identical PRNG position) is the reproducibility contract.
+
+**Log line:** `Synth click: key_click=off variation=on (ch12 preset 2
+CC7=64, vel low/high=45/75, jitter main +-1..3 click +-1..8, seed
+20260919)` — extends the layer/drone log block at startup.
+
+**Verification** (objective numbers in tests/RESULTS.md Phase 6): click
+self-end (font-level ≤21 ms burst + 4 s silent hold; CLI-subtraction
+residual = exact zero after 60 ms); T4 onsets advance ~2.0 ms with
+key_click=high (the click crosses the −55 dB detector threshold before the
+reed — 80/80 onsets), T1 high −4.3 ms; T2 legato + T1 with click on stay
+clean; T12 drone render unchanged (drone 48/55 lines at −59.5/−60.3 dBFS
+identical to Phase 5, melody −45.9 bit-stable, drone-only tail flat — no
+clicks from the fixture); T10 swallowed duplicates make no click; v2 font +
+key_click = bit-exact no-op; 267/267 config tests; clean build 0 warnings.
+
+**Config-key registry.** `key_click` and `variation` are documented in
+docs/HARMONIUM_CONFIG.md (14 keys total).
 
 ## Harmonium realism test harness (Phase 0, 2026-09-18)
 
@@ -665,20 +808,26 @@ To clear a stuck note in a live instance:
   see "Uniform Bellows Velocity" above; octave coupler + sub-octave
   layers ARE implemented — see "Layer router (Phase 4)"; bellows
   pressure/expression modeling beyond CC#11 mirroring is still future work.)
-- **MIDI channels 13/14/15 are reserved** by the layer router and drone;
-  MIDI input arriving on them from a controller would collide with
-  layer/drone voices.
+- **MIDI channels 12/13/14/15 are reserved** by the layer router, drone
+  and click layer; MIDI input arriving on them from a controller would
+  collide with layer/drone/click voices.
 
 ## Suggested next steps
 
-1. **Harmonium realism Phases 6+** (active effort — Phases 0–5 complete):
-   - Phase 6: key-click/chiff + micro-variation (per-note timing/level
-     humanization)
-   - Drone polish (open): sargam-name parsing for `drone` ("Sa,Pa" →
-     48,55 etc., needs a tonic offset decision); optional gentle chorus/
-     detune dedicated to the drone channel
+1. **Harmonium realism Phases 7+** (active effort — Phases 0–6 complete):
    - Phase 7 (envelope work can't fix this): high-register stretch — keys
      65–84 are one F4 sample stretched up to +19 semitones; needs new samples
+   - Raga note filtering (Phase 8 candidate) in the harmonium plugin (see
+     docs/CODEBASE_ANALYSIS.md for the harmonium-companion raga/sargam logic
+     worth porting)
+   - Low-register beat polish (Phase 3 leftover: raise D or clamp the low
+     register — note 43's 0.24 Hz beat is at the slow edge)
+   - Click polish (open): the click is currently a fixed bandpassed noise
+     burst; a velocity- and register-dependent click (quieter/higher-pitched
+     up the keyboard) and a `key_click_level` fine knob are natural
+     follow-ups; drone polish: sargam-name parsing for `drone` ("Sa,Pa" →
+     48,55 etc., needs a tonic offset decision); optional gentle
+     chorus/detune dedicated to the drone channel
    - Optional Phase 3 polish: `four` stop (2 unison + octave pair) in the
      derived font if the coupler doesn't cover it; raise D at the low end
      (note 43's beat 0.24 Hz is at the slow edge); live `stop` switching

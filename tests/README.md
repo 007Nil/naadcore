@@ -18,8 +18,10 @@ tests/
 │   ├── capture_live.sh    # live capture through CLI -> plugin -> audio
 │   ├── render_plugin.cpp  # plugin-in-loop offline renderer (ad hoc)
 │   ├── run_render_plugin.sh # compiles+runs render_plugin.cpp (ad hoc)
-│   ├── derive_sf2.py      # Phase 3 SF2 surgery: builds harmonium_v2.sf2
-│   │                      #   (double-reed detuned preset) from the original
+│   ├── derive_sf2.py      # Phase 3/6 SF2 surgery: builds harmonium_v2.sf2
+│   │                      #   (double-reed detuned preset) and, with --click,
+│   │                      #   harmonium_v3.sf2 (+ key-click sample/instrument/
+│   │                      #   preset 2) from the original
 │   ├── am_spectrum.py     # Phase 3 AM-band spectrum: top AM components per
 │   │                      #   note segment (separates beat from in-sample AM)
 │   ├── gen_probes_phase4.py # Phase 4 probes: T10 (duplicate NoteOn),
@@ -32,8 +34,8 @@ tests/
 ├── analyze.py             # numpy WAV analysis (onset/release/AM/peak/RMS)
 ├── test_plugin_config.cpp # config-seam tests (gain/reverb/chorus +
 │                          #   attack_ms/release_ms + stop + coupler/
-│                          #   sub_octave + drone/drone_level live keys,
-│                          #   213 checks)
+│                          #   sub_octave + drone/drone_level + key_click/
+│                          #   variation live keys, 267 checks)
 ├── renders/               # rendered/captured WAVs (gitignored)
 ├── references/            # personal-use reference clips (gitignored)
 ├── RESULTS.md             # A/B score sheet + objective measurements
@@ -86,7 +88,7 @@ python3 tests/analyze.py tests/renders/baseline_phase0_sf2_T1_single_note_envelo
 python3 tests/analyze.py tests/renders/<capture>.wav <timing.txt>
 
 # 6. Config-seam unit tests (all keys: gain/reverb/chorus/attack_ms/
-#    release_ms/stop/coupler/sub_octave/drone/drone_level)
+#    release_ms/stop/coupler/sub_octave/drone/drone_level/key_click/variation)
 tests/scripts/run_config_tests.sh
 
 # 7. Offline render through the REAL plugin (no audio hardware needed;
@@ -164,16 +166,65 @@ python3 tests/scripts/derive_sf2.py \
     plugins/harmonium/soundfonts/harmonium_v2.sf2 4 "harmonium double"
 ```
 
-- Args: `<in.sf2> <out.sf2> [detune_cents (default 4)] [preset_name]`.
+- Args: `<in.sf2> <out.sf2> [detune_cents (default 4)] [preset_name] [--click]`.
 - The committed `plugins/harmonium/soundfonts/harmonium_v2.sf2` was generated
   with the defaults above (+4 cents). Preset 0 is byte-identical behavior to
   the original font; preset 1 duplicates every key zone with fineTune=+4.
-- Regenerating: the script only needs the original font; sample data is
+- Regenerating: the script only needs the original font; reed sample data is
   referenced, so the derived file grows by <1 KB.
 - Validate with `python3 tests/scripts/sf2_audit.py
   plugins/harmonium/soundfonts/harmonium_v2.sf2` (expect 2 presets /
   2 instruments, doubled zones with `fineTune=4`) and
   `printf 'load <font>\ninst <font-id>\nquit\n' | fluidsynth`.
+
+## Phase 6: key-click font + click/variation usage (2026-09-19)
+
+`derive_sf2.py --click` additionally emits the click layer into the output
+font — the committed `plugins/harmonium/soundfonts/harmonium_v3.sf2` (now the
+build default) was generated with:
+
+```bash
+python3 tests/scripts/derive_sf2.py \
+    /home/nil/harmonium-companion/harmonium.sf2 \
+    plugins/harmonium/soundfonts/harmonium_v3.sf2 --click
+```
+
+- Adds a synthesized 40 ms "KeyClick" sample (numpy; brown-noise burst,
+  FFT-bandpassed 700–4000 Hz, −8 dBFS peak, 2/15 ms fades — all constants at
+  the top of derive_sf2.py; an audition WAV is written to
+  /tmp/opencode/keyclick_22050.wav) and preset 2 "key click": one wide zone
+  (keys 21–108, keynum=60, no loop) with a SELF-ENDING envelope (attack
+  1 ms / hold 0 / decay 40 ms / sustain 1000 cB = fully closed / release
+  15 ms). The click voice ends ≤21 ms after onset — a self-sustaining click
+  would be a permanent drone (see tests/RESULTS.md Phase 6 for the proof).
+- `sf2_audit.py` on v3: 3 presets / 3 instruments / 15 samples. Preset 0 is
+  byte-identical to v2 (verified: T1 offline renders through the
+  deterministic fluidsynth CLI compare equal, 0 LSB).
+
+Click + variation usage (config keys, so also usable as renderer overrides):
+
+```bash
+# faint keyboard chirp on every note onset:
+tests/scripts/run_render_plugin.sh tests/midi/T4_staccato_repeat.mid \
+    tests/renders/p6_T4_low.wav 3 key_click=low
+# clearly audible tick:
+tests/scripts/run_render_plugin.sh tests/midi/T1_single_note_envelope.mid \
+    tests/renders/p6_T1_high.wav 1 key_click=high
+# humanized repeats (default) vs byte-exact Phase 5 behavior:
+tests/scripts/run_render_plugin.sh tests/midi/T4_staccato_repeat.mid \
+    tests/renders/p6_T4_varon.wav 3                  # variation=on default
+tests/scripts/run_render_plugin.sh tests/midi/T4_staccato_repeat.mid \
+    tests/renders/p6_T4_plain.wav 3 variation=off key_click=off
+```
+
+Measurement notes: the plugin-in-loop renderer is wall-clock throttled, so
+two runs of the same config differ in event-to-block placement (renderer
+placement jitter, NOT plugin nondeterminism) — per-note segment peaks are
+timing-robust and are the right determinism metric (same config → same
+per-note pattern to 0.000 dB). For exact sample-level click measurements use
+the deterministic fluidsynth CLI: the click is exactly reproducible by a
+MIDI file that selects preset 2 on channel 12, sets CC 7 = 64 and plays the
+same velocities the plugin does (tests/RESULTS.md Phase 6 has the numbers).
 
 Config overrides in the plugin-in-loop renderer (Phase 3):
 
@@ -187,8 +238,9 @@ Any number of `KEY=VALUE` pairs after the tail argument is applied via
 plugin config key is renderable: `stop=double`, `attack_ms=15`,
 `soundfont_path=/path/to.sf2`, ... A rejected pair aborts the render.
 
-`render_sf2.sh` now defaults to the in-repo derived font; set
-`HARMONIUM_SOUNDFONT=/path/to.sf2` to use any other font.
+`render_sf2.sh` now defaults to the in-repo Phase 6 derived font
+(harmonium_v3.sf2); set `HARMONIUM_SOUNDFONT=/path/to.sf2` to use any other
+font.
 
 Phase 3 probe tracks:
 

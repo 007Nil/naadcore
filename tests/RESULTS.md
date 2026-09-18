@@ -495,6 +495,132 @@ mid-run, deliberately) — verified at state level in the config harness
 
 Renders: `tests/renders/p5_*.wav` (gitignored).
 
+## Phase 6: key-click/chiff + per-note micro-variation (2026-09-19)
+
+The polish phase. Two new config keys: `key_click` (off/low/high — faint
+mechanical key noise on every accepted NoteOn, internal channel 12, font
+preset 2) and `variation` (on/off — deterministic per-note velocity jitter).
+All renders below are **plugin-in-loop** (`run_render_plugin.sh`), font =
+`plugins/harmonium/soundfonts/harmonium_v3.sf2` (new build default), default
+voicing — unless stated.
+
+### Font v3 + preset 0 comparability
+
+- `sf2_audit.py` on v3: 3 presets / 3 instruments / 15 samples (+terminal);
+  new "KeyClick" sample 882 frames (40 ms @ 22050 Hz, no loop); click
+  instrument = one zone keys 21–108, keynum=60, attack 1 ms / hold ~0 /
+  decay 40 ms / sustain 1000 cB (fully closed) / release 15 ms. File
+  6,619,754 bytes (+1934 vs v2 — the click sample IS copied, +882 frames +
+  headroom, plus pdta records).
+- **Presets 0/1 identical between v2 and v3:** fluidsynth-CLI offline
+  renders of T1 (preset 0) with v2 vs v3 are **byte-identical (0 LSB)**.
+- Refactor guard: regenerating v2 with the updated `derive_sf2.py` reproduces
+  the committed v2 **byte-identically**.
+
+### Click self-end proof (the critical correctness point)
+
+sustainVolEnv is an attenuation (0 = hold full level FOREVER), so the click
+envelope decays to a fully-closed sustain (1000 cB = 100 dB down); the
+unlooped 40 ms sample also runs out of data. Raw fluidsynth-CLI render,
+preset 2, note 60 vel 127 held 4 s:
+
+| Metric | Value |
+|---|---|
+| Burst audible (RMS env > −80 dBFS) | 502.1 → 521.0 ms after onset (**≤21 ms ≪ 60 ms**) |
+| 0.56–4.4 s of the 4 s hold | **−90.3 dBFS = s16 digital silence floor** |
+
+A self-sustaining click (sustain left open) would have been a permanent
+drone — spec failure; measured: the voice self-ends.
+
+### Click level calibration (final constants)
+
+The exact calls the plugin makes (ch12: preset 2, CC 7 = 64, click velocity
+45/75) replayed through the **deterministic** fluidsynth CLI (byte-identical
+run-to-run; reverb off, gain 0.4), reed-only render subtracted in the time
+domain — the residual IS the click:
+
+| Mode | Click 0–60 ms power | Click peak | vs reed onset (peak −27.2 dBFS) | Active > −70 dBFS | Residual after 60 ms |
+|---|---|---|---|---|---|
+| low (vel 45) | −71.6 dBFS | −51.5 dBFS | **24.4 dB below** | 3.8–11.7 ms | **−240 dBFS = exact zero** |
+| high (vel 75) | −62.7 dBFS | −42.6 dBFS | **15.4 dB below** | 3.7–15.7 ms | **−240 dBFS = exact zero** |
+
+The exact-zero residual doubles as a regression proof: the reed voice is
+bit-identical with and without the click (no channel interaction), and the
+click never leaks into the sustain (self-end). CC 7 sweep on the click
+channel (vel 127): 127→−21.6, 96→−26.4, 64→−33.5, 32→−45.5, 0→silent
+(peak dBFS, no reverb) — CC 7 = 64 is a real −12 dB knob position, the
+final level trim is the velocity mapping above.
+
+Plugin-in-loop confirmation (cross-render subtraction is NOT usable there —
+the wall-clock-throttled file driver shifts event placement between runs):
+with `key_click=high` the T4 onset detector (−55 dB threshold) fires
+**2.0 ms earlier** on average across all 80 onsets (+1.89 ms vs plain's
++3.92 ms; T1 high −4.3 ms) — the click crosses the threshold before the
+reed. With `key_click=low` the bump is at/below the renderer's placement
+jitter (the click is genuinely ~25–30 dB below a vel-100 onset: faint by
+design). Per-hop inspection at a single T1 onset shows the high click
+elevating the first ~10 ms by up to ~14 dB before the reed swells.
+
+### Determinism + variation effect (T4, 10× repeated note 60 @ vel 100)
+
+Per-note segment peaks (each render's own notes; renderer placement jitter
+does not move segment peaks — detA/detB agree to 0.000 dB):
+
+| Metric | variation=off (plain) | variation=on |
+|---|---|---|
+| 10 repeated-note peaks | −27.16 ×10 (identical) | −27.46…−26.56 (all differ) |
+| Δ vs reference | 0.00 (all) | −0.30…+0.60 dB (all nonzero) |
+| Adjacent repeat |Δ| | **0.00 dB (all 9 pairs)** | 0.20–1.10 dB (never identical) |
+| detA vs detB (same config, 2 runs) | — | **max 0.000 dB** (same seed → same pattern) |
+
+Note 67 repeats (slots 10–19) confirm both effects (Δ −0.50…+0.60, detA/detB
+0.000). The raw detA/detB files differ byte-wise (event-to-block placement
+of the wall-clock renderer — first diff at the 0.199 s lead-in), but the
+velocity PATTERN — what the variation system controls — is bit-stable.
+Note: the click jitter consumes PRNG draws, so identical *config* (not
+identical PRNG position) is the reproducibility contract.
+
+### Regression: variation=off + key_click=off == Phase 5 sound
+
+- T1 (plugin-in-loop, v3 font): peaks −25.7/−41.6/−21.9/−26.1 dBFS, AM
+  2.94–3.47 Hz — identical to the Phase 2/3/5 recorded values (within the
+  renderer's ±6 ms event jitter for onset/release readings).
+- T4: 80/80 onsets, plain repeated-note peaks exactly identical (above).
+- **v2 font + key_click=low**: bit-exact no-op vs the plain render (the
+  `click_preset_ok_` guard — without it the failed preset selection left a
+  quiet duplicate reed voice: +0.7…+3.6 dB bumps; guarded, peaks identical).
+
+### Phrase-level cleanliness with the click on
+
+- **T10 (duplicate NoteOn) + key_click=low**: exactly 2 auto-segments
+  (0.70–4.74, 6.21–9.73 s) — NO onset at the duplicate instants (2.5/7.5 s):
+  a swallowed duplicate makes no click (no pallet moved), and each note has
+  exactly one release tail.
+- **T2 legato + key_click=low**: 4 clean phrases, onsets/releases/AM match
+  the plain render within measurement resolution.
+- **T12 (drone=48,55) + key_click=low**: drone 48/55 fundamentals
+  −59.5/−60.3 dBFS (phrase 1) and −60.1/−60.7 dBFS (drone-only tail) —
+  identical to the Phase 5 numbers (the drone starts via config, which never
+  triggers clicks); melody 69 fundamental −45.9 dBFS, bit-stable; drone-only
+  tail envelope flat (−50.7…−44.9 dBFS, no click bursts).
+
+### Config tests / build / smoke
+
+- `run_config_tests.sh`: **267/267** checks (was 213; +54 for the
+  `key_click`/`variation` keys — defaults, valid set/get, strict rejection
+  (junk/case/trailing space/empty), mid-phrase toggles interleaved between
+  note events, duplicate-NoteOn swallow with click on, CC 123 with click on,
+  pre-init storage + apply + live changes).
+- Clean build (rm -rf build): **0 warnings** (-Wall -Wextra -Wpedantic).
+- Live CLI smoke (timeout 5, `--midi 14:0` Midi Through — the Q49 was not
+  connected): exit 124 (alive), startup shows the v3 font path and
+  `Synth click: key_click=off variation=on (ch12 preset 2 CC7=64, vel
+  low/high=45/75, jitter main +-1..3 click +-1..8, seed 20260919)`, no
+  errors.
+
+Renders: `tests/renders/p6_*.wav` (gitignored). Calibration MIDIs/WAVs in
+/tmp/opencode/p6 (click_selfend, reedonly/both_low/both_high, cc7_sweep).
+
 ## Listening notes
 
 (reference clips pending — see tests/README.md for the workflow)
@@ -531,3 +657,17 @@ Renders: `tests/renders/p5_*.wav` (gitignored).
   bit-identical on/off (no bellows/gain interaction); the double stop
   applies to the drone channel too (0.50 Hz resolved beat on drone note
   55); CC 123 takes the drone to the s16 floor along with everything else.
+- Phase 6 (2026-09-19): the click preset (ch12, CC7=64, vel 45/75) measures
+  24.4/15.4 dB below the reed onset peak (faint tick / audible tick) and
+  self-ends ≤21 ms after onset (verified: 4 s hold = digital silence;
+  click-render minus reed-only residual = exact zero after 60 ms — the reed
+  voice is bit-identical with/without the click). variation=off renders
+  exactly like Phase 5 (repeated-note peaks identical to 0.00 dB);
+  variation=on (fixed-seed mt19937, ±1..3 main / ±4..8 click, anti-repeat)
+  makes every note differ (−0.30…+0.60 dB, adjacent repeats never
+  identical) with a bit-stable pattern across runs (0.000 dB). Renderer
+  caveat: the plugin-in-loop file driver is wall-clock throttled — same
+  config does NOT give byte-identical WAVs (event-to-block placement
+  jitter); per-note segment peaks are the robust determinism metric, and
+  the fluidsynth CLI renderer IS byte-deterministic (used for all exact
+  click measurements).

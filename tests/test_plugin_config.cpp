@@ -530,10 +530,145 @@ int main(int argc, char** argv) {
     check_result("drone cc123: off after restart", p->set_config("drone", "off"),
                  naadcore::PLUGIN_OK);
 
+    // ---- Phase 6: key_click (faint chiff layer on internal ch 12) and
+    // variation (per-note velocity micro-variation). Headless: the audible
+    // proof (click transient levels, self-end, non-identical repeats) is
+    // done with plugin-in-loop renders — see tests/RESULTS.md Phase 6.
+    // Here: config seam, strict validation, next-NoteOn semantics and
+    // note-flow integrity with both features active.
+
+    // defaults
+    check_eq("default key_click", p->get_config("key_click"), "off");
+    check_eq("default variation", p->get_config("variation"), "on");
+
+    // valid set/get (mode is consulted per accepted NoteOn — a live toggle
+    // applies from the next NoteOn; state-level proof below)
+    check_result("key_click low", p->set_config("key_click", "low"),
+                 naadcore::PLUGIN_OK);
+    check_eq("key_click reads low", p->get_config("key_click"), "low");
+    check_result("key_click high", p->set_config("key_click", "high"),
+                 naadcore::PLUGIN_OK);
+    check_eq("key_click reads high", p->get_config("key_click"), "high");
+    check_result("key_click off", p->set_config("key_click", "off"),
+                 naadcore::PLUGIN_OK);
+    check_eq("key_click reads off", p->get_config("key_click"), "off");
+    // strict validation: junk / case / whitespace / empty rejected, state kept
+    check_result("key_click junk rejected",
+                 p->set_config("key_click", "medium"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("key_click case-sensitive rejected",
+                 p->set_config("key_click", "LOW"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("key_click trailing space rejected",
+                 p->set_config("key_click", "low "),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("key_click empty rejected",
+                 p->set_config("key_click", ""),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_eq("key_click unchanged after rejects", p->get_config("key_click"),
+             "off");
+
+    // notes play cleanly with the click enabled; mid-phrase toggle between
+    // events (next-NoteOn semantics at state level)
+    check_result("key_click: set low", p->set_config("key_click", "low"),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.channel = 0;
+    ev.data1 = 60;
+    ev.data2 = 100;
+    check_result("key_click: note on with click", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    check_result("key_click: toggle high mid-note",
+                 p->set_config("key_click", "high"), naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("key_click: note off with click",
+                 p->handle_midi_event(ev), naadcore::PLUGIN_OK);
+
+    // duplicate NoteOn while held with the click ON: still swallowed (a
+    // swallowed duplicate makes NO click — no pallet moved), one release
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.data1 = 64;
+    ev.data2 = 100;
+    check_result("key_click: note on", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.data2 = 40;
+    check_result("key_click: duplicate ignored (no click)",
+                 p->handle_midi_event(ev), naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("key_click: note off after duplicate",
+                 p->handle_midi_event(ev), naadcore::PLUGIN_OK);
+
+    // variation: on/off live keys, strict validation
+    check_result("variation off", p->set_config("variation", "off"),
+                 naadcore::PLUGIN_OK);
+    check_eq("variation reads off", p->get_config("variation"), "off");
+    check_result("variation on", p->set_config("variation", "on"),
+                 naadcore::PLUGIN_OK);
+    check_eq("variation reads on", p->get_config("variation"), "on");
+    check_result("variation junk rejected", p->set_config("variation", "1"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("variation case-sensitive rejected",
+                 p->set_config("variation", "OFF"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("variation trailing space rejected",
+                 p->set_config("variation", "off "),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("variation empty rejected", p->set_config("variation", ""),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_eq("variation unchanged after rejects", p->get_config("variation"),
+             "on");
+
+    // repeated notes with variation on and off (state level: no errors,
+    // clean releases; the audible jitter difference is proven by renders)
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.channel = 0;
+    ev.data1 = 67;
+    ev.data2 = 100;
+    for (int i = 0; i < 2; ++i) {
+        check_result("variation: repeated note on", p->handle_midi_event(ev),
+                     naadcore::PLUGIN_OK);
+        ev.type = naadcore::MidiEvent::NOTE_OFF;
+        check_result("variation: repeated note off", p->handle_midi_event(ev),
+                     naadcore::PLUGIN_OK);
+        ev.type = naadcore::MidiEvent::NOTE_ON;
+    }
+    check_result("variation: set off", p->set_config("variation", "off"),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    check_result("variation off: note on", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("variation off: note off", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+
+    // CC 123 with the click on: full reset still clean (a sounding click
+    // voice is simply cut short; no click state exists to clear)
+    check_result("key_click: re-set low", p->set_config("key_click", "low"),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.data1 = 72;
+    ev.data2 = 100;
+    check_result("key_click cc123: note on", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::CONTROL_CHANGE;
+    ev.data1 = 123;
+    check_result("key_click cc123: all notes off", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.data1 = 74;
+    ev.data2 = 90;
+    check_result("key_click cc123: note after reset",
+                 p->handle_midi_event(ev), naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("key_click cc123: note off after reset",
+                 p->handle_midi_event(ev), naadcore::PLUGIN_OK);
+    check_result("key_click: off again", p->set_config("key_click", "off"),
+                 naadcore::PLUGIN_OK);
+
     p->stop_audio();
     destroy(p);
 
-    // config set before init is applied at init
+    // config set before init is applied at init (Phase 6 keys included)
     auto* q = create();
     check_result("pre-init gain 2.5", q->set_config("gain", "2.5"),
                  naadcore::PLUGIN_OK);
@@ -557,9 +692,15 @@ int main(int argc, char** argv) {
                  naadcore::PLUGIN_OK);
     check_result("pre-init drone_level 50", q->set_config("drone_level", "50"),
                  naadcore::PLUGIN_OK);
+    check_result("pre-init key_click high", q->set_config("key_click", "high"),
+                 naadcore::PLUGIN_OK);
+    check_result("pre-init variation off", q->set_config("variation", "off"),
+                 naadcore::PLUGIN_OK);
     check_eq("pre-init drone stored", q->get_config("drone"), "48,55");
     check_eq("pre-init drone_level stored", q->get_config("drone_level"),
              "50");
+    check_eq("pre-init key_click stored", q->get_config("key_click"), "high");
+    check_eq("pre-init variation stored", q->get_config("variation"), "off");
     check_result("q init", q->init(nullptr), naadcore::PLUGIN_OK);
     check_eq("pre-init gain applied", q->get_config("gain"), "2.500");
     check_eq("pre-init reverb applied", q->get_config("reverb"), "off");
@@ -573,6 +714,18 @@ int main(int argc, char** argv) {
     check_eq("pre-init drone applied", q->get_config("drone"), "48,55");
     check_eq("pre-init drone_level applied", q->get_config("drone_level"),
              "50");
+    check_eq("pre-init key_click applied", q->get_config("key_click"),
+             "high");
+    check_eq("pre-init variation applied", q->get_config("variation"), "off");
+    // live Phase 6 changes after a pre-init config
+    check_result("pre-init key_click live low", q->set_config("key_click", "low"),
+                 naadcore::PLUGIN_OK);
+    check_eq("pre-init key_click live reads", q->get_config("key_click"),
+             "low");
+    check_result("pre-init variation live on", q->set_config("variation", "on"),
+                 naadcore::PLUGIN_OK);
+    check_eq("pre-init variation live reads", q->get_config("variation"),
+             "on");
     // live drone changes after a pre-init config: remove 55, then off
     check_result("pre-init drone live trim", q->set_config("drone", "48"),
                  naadcore::PLUGIN_OK);
@@ -582,6 +735,16 @@ int main(int argc, char** argv) {
     check_eq("pre-init drone live off reads", q->get_config("drone"), "off");
     check_result("pre-init drone_level live", q->set_config("drone_level", "45"),
                  naadcore::PLUGIN_OK);
+    // a note with key_click=low + variation=on (both live after pre-init)
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.channel = 2;
+    ev.data1 = 61;
+    ev.data2 = 100;
+    check_result("pre-init click+variation note on",
+                 q->handle_midi_event(ev), naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("pre-init click+variation note off",
+                 q->handle_midi_event(ev), naadcore::PLUGIN_OK);
     // layers enabled from init: a note must start main + both layers and
     // release them all (headless: PLUGIN_OK + layer state readback)
     naadcore::MidiEvent evq{};

@@ -120,10 +120,14 @@ PluginResult HarmoniumPlugin::init(const char* audio_driver) {
     apply_stop();
     std::cout << "Synth stop: " << stop_ << std::endl;
 
-    // Layer router (Phase 4): internal channels 14/15 carry the sub-octave
-    // and octave-coupler layers on the same stop preset. Set their gains,
-    // and give the coupler channel its optional +3 cents detune (subtle
-    // beat against the main voice).
+    // Key click (Phase 6): channel 12 must NOT play the stop preset —
+    // apply_stop() looped all channels, so re-select the click preset (2)
+    // on it BEFORE asserting the channel gains (a FAILED program_select —
+    // e.g. a font without preset 2 like harmonium_v2.sf2 — resets the
+    // channel's CC 7 to full, so the fixed click gain must be re-asserted
+    // afterwards by apply_layer_gains(); with v3 the selection succeeds
+    // and the order is simply harmless).
+    apply_click_preset();
     apply_layer_gains();
     apply_coupler_detune();
     std::cout << "Synth layers: coupler=" << (coupler_on_ ? "on" : "off")
@@ -131,6 +135,16 @@ PluginResult HarmoniumPlugin::init(const char* audio_driver) {
               << " (ch" << kCouplerChannel << "=note+12 CC7=" << kCouplerCC7
               << ", ch" << kSubOctaveChannel << "=note-12 CC7="
               << kSubOctaveCC7 << ")" << std::endl;
+
+    std::cout << "Synth click: key_click=" << key_click_
+              << " variation=" << (variation_on_ ? "on" : "off")
+              << " (ch" << kClickChannel << " preset " << kClickPreset
+              << " CC7=" << kClickCC7
+              << ", vel low/high=" << static_cast<int>(kClickVelLow)
+              << "/" << static_cast<int>(kClickVelHigh)
+              << ", jitter main +-1.." << kJitterMain
+              << " click +-1.." << kJitterClick
+              << ", seed " << kVariationSeed << ")" << std::endl;
 
     // Drone (Phase 5): channel 13 carries the drone fixture on the same
     // stop preset (apply_stop() above already programmed it). Set its
@@ -220,6 +234,11 @@ void HarmoniumPlugin::apply_layer_gains() {
     // handle_midi_event), so these values stay the layer gain knob.
     fluid_synth_cc(synth_, kCouplerChannel, 7, kCouplerCC7);
     fluid_synth_cc(synth_, kSubOctaveChannel, 7, kSubOctaveCC7);
+    // The click layer's fixed channel gain lives here too: apply_layer_
+    // gains() is the "re-assert all internal-channel gains" helper called
+    // at init and after every stop change.
+    fluid_synth_cc(synth_, kClickChannel, 7,
+                   static_cast<uint8_t>(kClickCC7));
 }
 
 void HarmoniumPlugin::apply_coupler_detune() {
@@ -330,6 +349,66 @@ void HarmoniumPlugin::apply_drone_level() {
                    static_cast<uint8_t>(drone_level_));
 }
 
+void HarmoniumPlugin::apply_click_preset() {
+    if (!synth_ || soundfont_id_ < 0) {
+        return;
+    }
+    // The click layer plays the font's preset 2 ("key click" — the
+    // self-ending click instrument), NOT the stop preset. Must run after
+    // every apply_stop(), which re-programmes ALL channels (including 12),
+    // and BEFORE the channel gains are re-asserted (a FAILED selection
+    // resets the channel's CC 7 — see init()). With a font lacking preset
+    // 2 (harmonium_v2.sf2) the selection fails and the flag below stays
+    // false: the click layer then stays a SILENT no-op (without this
+    // guard, a noteon on the channel would fall back to the stop preset
+    // and stack a quiet duplicate reed voice on every note).
+    click_preset_ok_ =
+        (fluid_synth_program_select(synth_, kClickChannel, soundfont_id_, 0,
+                                    kClickPreset) == 0);
+}
+
+uint8_t HarmoniumPlugin::jitter_velocity(int velocity, int max_jitter,
+                                         int& last_jitter) {
+    // Random magnitude 1..max_jitter with a random sign — never zero, so
+    // a varied note never plays at the exact input velocity (defeats
+    // sample-identical repeats). Anti-repeat: redraw (bounded) while the
+    // draw equals the previous one — two consecutive varied notes never
+    // coincide (the honest caveat: at the velocity clamp edges, 1 or 127,
+    // two different jitter draws can still clamp to the same velocity).
+    // Deterministic: fixed-seed mt19937, so identical event sequences
+    // produce identical velocity patterns.
+    std::uniform_int_distribution<int> magnitude(1, max_jitter);
+    std::uniform_int_distribution<int> sign(0, 1);
+    int j = 0;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        j = magnitude(rng_) * (sign(rng_) ? 1 : -1);
+        if (j != last_jitter) {
+            break;
+        }
+    }
+    last_jitter = j;
+    const int v = std::clamp(velocity + j, 1, 127);
+    return static_cast<uint8_t>(v);
+}
+
+void HarmoniumPlugin::trigger_click(uint8_t note) {
+    if (!synth_ || soundfont_id_ < 0 || key_click_ == "off"
+        || !click_preset_ok_) {
+        return;
+    }
+    const int base = (key_click_ == "high") ? kClickVelHigh : kClickVelLow;
+    const int vel = variation_on_
+                        ? jitter_velocity(base, kJitterClick,
+                                          last_click_jitter_)
+                        : base;
+    // Fire-and-forget: the click instrument's envelope is self-ending
+    // (decay 40 ms to a fully-closed sustain; proven by render to end the
+    // voice <= 60 ms — tests/RESULTS.md Phase 6), so NO noteoff tracking,
+    // NOT in held_notes_, invisible to the bellows model. A note outside
+    // the click zone (keys 21-108) simply produces no voice — silent skip.
+    (void)fluid_synth_noteon(synth_, kClickChannel, note, vel);
+}
+
 PluginResult HarmoniumPlugin::start_audio() {
     if (!synth_) {
         std::cerr << "Synth not initialized" << std::endl;
@@ -403,9 +482,12 @@ void HarmoniumPlugin::set_note_layer(HeldNote& held, uint8_t layer_bit, bool on)
         return;
     }
     if (on) {
+        // Mid-phrase layer toggles replay the note's stored PLAYED
+        // (jittered) velocity — the same pressure this key press produced,
+        // not a fresh random draw.
         if (fluid_synth_noteon(synth_, channel,
                                static_cast<uint8_t>(layer_note),
-                               held.sounding_velocity) == 0) {
+                               held.played_velocity) == 0) {
             held.layers |= layer_bit;
         }
         // A failed noteon (e.g. key outside the font's zones) simply
@@ -452,8 +534,21 @@ PluginResult HarmoniumPlugin::handle_midi_event(const MidiEvent& event) {
                 }
                 const uint8_t sounding_velocity = reference_velocity_;
 
+                // Per-note micro-variation (Phase 6): jitter ONLY the
+                // velocity handed to FluidSynth — the bellows reference
+                // latch/baton bookkeeping above stays exact (raw press
+                // velocities in reference_velocity_ / HeldNote.velocity).
+                // +-1..3 is imperceptible dynamically but the main and
+                // layer voices of repeated keys are no longer
+                // sample-identical. With variation off: exact velocities.
+                const uint8_t played_velocity =
+                    variation_on_
+                        ? jitter_velocity(sounding_velocity, kJitterMain,
+                                          last_main_jitter_)
+                        : sounding_velocity;
+
                 // Note on with velocity
-                int result = fluid_synth_noteon(synth_, event.channel, event.data1, sounding_velocity);
+                int result = fluid_synth_noteon(synth_, event.channel, event.data1, played_velocity);
                 if (result != 0) {
                     std::cerr << "Note on failed: ch=" << (int)event.channel
                               << " note=" << (int)event.data1 << std::endl;
@@ -461,10 +556,12 @@ PluginResult HarmoniumPlugin::handle_midi_event(const MidiEvent& event) {
                 }
 
                 // Layer router (Phase 4): start the octave-coupler and
-                // sub-octave voices for this note, all at the bellows
-                // reference velocity (one bellows — layers never fork it).
+                // sub-octave voices for this note, all at the played
+                // (jittered) bellows velocity of this key press (one
+                // bellows, one finger noise per press — layers never
+                // fork it).
                 HeldNote held{event.data1, event.data2, event.channel,
-                              sounding_velocity, 0};
+                              sounding_velocity, played_velocity, 0};
                 if (coupler_on_) {
                     set_note_layer(held, kLayerCoupler, true);
                 }
@@ -472,6 +569,14 @@ PluginResult HarmoniumPlugin::handle_midi_event(const MidiEvent& event) {
                     set_note_layer(held, kLayerSubOctave, true);
                 }
                 held_notes_.push_back(held);
+
+                // Key click (Phase 6): a faint mechanical transient as the
+                // pallet opens — only on ACCEPTED NoteOns. Drone changes
+                // never reach this path, and a swallowed duplicate NoteOn
+                // (handled above) correctly makes no click: no pallet
+                // moved. The voice self-ends via its preset's envelope —
+                // no noteoff tracking (see trigger_click).
+                trigger_click(event.data1);
             } else {
                 // Note on with 0 velocity is note off
                 if (!release_held_note(event.data1)) {
@@ -493,8 +598,11 @@ PluginResult HarmoniumPlugin::handle_midi_event(const MidiEvent& event) {
         case MidiEvent::CONTROL_CHANGE: {
             // All Notes Off: reset bellows state (stuck-note insurance)
             // and silence ALL 16 channels — CC 123 sent to one channel
-            // only clears that channel's voices, and layer/drone voices
-            // live on internal channels the sender knows nothing about.
+            // only clears that channel's voices, and layer/drone/click
+            // voices live on internal channels the sender knows nothing
+            // about (15 coupler, 14 sub, 13 drone, 12 click — a sounding
+            // click voice is simply cut short here; there is no click
+            // state to clear, it is not tracked).
             // CC 123 is a FULL reset: the drone's sounding-note container
             // is cleared too (its all_notes_off below covers channel 13),
             // while the stored "drone" spec is kept — re-issuing the same
@@ -611,6 +719,12 @@ std::string HarmoniumPlugin::get_config(const char* key) {
     if (k == "drone_level") {
         return std::to_string(drone_level_);
     }
+    if (k == "key_click") {
+        return key_click_;
+    }
+    if (k == "variation") {
+        return variation_on_ ? "on" : "off";
+    }
 
     return "";
 }
@@ -710,7 +824,12 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
         // loops all channels); re-assert their gains in case anything
         // reset them along with the preset.
         if (synth_ && soundfont_id_ >= 0) {
+            // Order matters: apply_stop() re-programmes ALL channels
+            // (including the click channel); the click preset selection
+            // must run before the gains are re-asserted (a FAILED
+            // selection resets the channel's CC 7 — see init()).
             apply_stop();
+            apply_click_preset();
             apply_layer_gains();
             // The drone channel plays the stop preset too (apply_stop
             // loops all channels); re-assert its gain alongside the
@@ -776,6 +895,35 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
         drone_level_ = static_cast<int>(level);
         if (synth_) {
             apply_drone_level();
+        }
+        return PLUGIN_OK;
+    }
+
+    // Key click (Phase 6): "off" (default) | "low" | "high". Stored state
+    // only — the mode is consulted per accepted NoteOn (trigger_click),
+    // so pre-init storage applies at init and a live toggle applies from
+    // the NEXT accepted NoteOn (held notes keep sounding unchanged; their
+    // clicks already fired).
+    if (k == "key_click") {
+        const std::string v = value;
+        if (v != "off" && v != "low" && v != "high") {
+            return PLUGIN_INVALID_PARAM;
+        }
+        key_click_ = v;
+        return PLUGIN_OK;
+    }
+
+    // Per-note micro-variation (Phase 6): on (default) | off. Like
+    // key_click, consulted per accepted NoteOn (jitter_velocity uses the
+    // fixed-seed PRNG — deterministic for identical event sequences).
+    if (k == "variation") {
+        const std::string v = value;
+        if (v == "on") {
+            variation_on_ = true;
+        } else if (v == "off") {
+            variation_on_ = false;
+        } else {
+            return PLUGIN_INVALID_PARAM;
         }
         return PLUGIN_OK;
     }

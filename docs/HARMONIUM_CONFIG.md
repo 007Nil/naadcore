@@ -1,10 +1,10 @@
 # Harmonium Plugin — Config-Key Registry (authoritative)
 
 Every key accepted by `set_config()` / `get_config()` on the harmonium plugin
-(`plugins/harmonium/harmonium_plugin.cpp`), Phases 1–5 combined. This is the
+(`plugins/harmonium/harmonium_plugin.cpp`), Phases 1–6 combined. This is the
 authoritative reference; HANDOVER.md gives the design narrative, this file the
 contract. Each row was verified against the implementation (2026-09-19,
-Phase 5).
+Phase 6).
 
 All keys are plugin-only — there is no CLI flag surface yet (see
 HANDOVER.md "Suggested next steps"); the offline renderer
@@ -15,7 +15,7 @@ HANDOVER.md "Suggested next steps"); the offline renderer
 
 | Key | Type / format | Default | Valid values | When it applies | `get_config` echo | Invalid input | FluidSynth mechanism |
 |---|---|---|---|---|---|---|---|
-| `soundfont_path` | string (filesystem path) | compiled-in `HARMONIUM_SOUNDFONT_PATH` (in-repo `harmonium_v2.sf2`) | any string (not validated) | **init-only** — used by `sfload` at `init()`; setting it after init does NOT reload | stored string | never rejected; a bad path fails `init()` with `PLUGIN_ERROR` ("Failed to load SoundFont") | `fluid_synth_sfload` |
+| `soundfont_path` | string (filesystem path) | compiled-in `HARMONIUM_SOUNDFONT_PATH` (in-repo `harmonium_v3.sf2`) | any string (not validated) | **init-only** — used by `sfload` at `init()`; setting it after init does NOT reload | stored string | never rejected; a bad path fails `init()` with `PLUGIN_ERROR` ("Failed to load SoundFont") | `fluid_synth_sfload` |
 | `audio_driver` | string | `alsa` | any string (FluidSynth validates at driver creation) | **init-only** — written to settings before the driver is created; the `init(driver)` argument overrides the stored value | stored string | never rejected; an unusable driver fails `start_audio()` with `PLUGIN_ERROR` | `fluid_settings_setstr("audio.driver")` + `new_fluid_audio_driver` |
 | `gain` | float | `0.4` (echoed `0.400`) | 0.0 – 10.0 inclusive | **live** | re-reads the synth (`fluid_synth_get_gain`), printed `%.3f` | `PLUGIN_INVALID_PARAM` (junk, trailing chars, empty, NaN/Inf, out of range); state unchanged | `fluid_synth_set_gain` |
 | `reverb` | enum | `on` | `on` \| `off` (case-sensitive, exact) | **live** | `on` / `off` | `PLUGIN_INVALID_PARAM`; state unchanged | `fluid_synth_reverb_on(synth, -1, …)` (all groups); room/damp/width/level pinned at init (0.2/0.0/0.3/0.4) |
@@ -27,6 +27,8 @@ HANDOVER.md "Suggested next steps"); the offline renderer
 | `sub_octave` | enum | `off` | `on` \| `off` (case-sensitive, exact) | **live, mid-phrase** — as `coupler` but note−12 on channel 14 | `on` / `off` | `PLUGIN_INVALID_PARAM` (same rules) | `fluid_synth_noteon/noteoff` on internal **channel 14** (note−12, silently skipped below note 12), fixed gain CC 7 = 40; same mirroring policy |
 | `drone` | note list | `off` | `off`, or 1–8 comma-separated integers 0–127 — digits only: no whitespace, signs, floats, empty tokens, or duplicate notes. `""` (empty string) = off. Sargam names ("Sa,Pa") are NOT parsed (future work) | **live** — diff against the actually-sounding notes: added notes start immediately, removed notes release (natural `release_ms` tail), unchanged notes keep sounding (no re-trigger). After CC 123 the stored spec is kept but the notes are silenced; **re-issuing the same value restarts them** | canonical spec: `off` (also for `""`) or the accepted value as given | `PLUGIN_INVALID_PARAM` (`sa,pa`, `128`, `-1`, `48.5`, `48,`, `,48`, `48,,55`, `" 48"`, `"48 "`, `"48, 55"`, `OFF`, `on`, 9+ notes, duplicates); state unchanged | `fluid_synth_noteon/noteoff` on internal **channel 13** at fixed velocity 100 (loudness is `drone_level`, not velocity); preset follows `stop`; pitch bend / CC 11 deliberately NOT mirrored; CC 123 silences it via `all_notes_off` + clears the sounding-note container |
 | `drone_level` | integer | `45` | 0 – 127 | **live** | decimal string | `PLUGIN_INVALID_PARAM` (junk, floats, empty, trailing space, out of range); state unchanged | `fluid_synth_cc(synth, 13, 7, level)` — CC 7 on channel 13 IS the drone's gain knob (never mirrored from MIDI input). 45 sits between sub-octave (40) and coupler (60); measured ≈11–14 dB under the melody fundamental line (tests/RESULTS.md Phase 5) |
+| `key_click` | enum | `off` | `off` \| `low` \| `high` (case-sensitive, exact) | **live, next NoteOn** — stored state, consulted per ACCEPTED NoteOn; a live toggle applies from the next note (held notes keep sounding unchanged, their clicks already fired); pre-init storage applies at init | `off` / `low` / `high` | `PLUGIN_INVALID_PARAM` (`medium`, `LOW`, `"low "`, empty); state unchanged | `fluid_synth_noteon(synth, 12, note, vel)` on internal **channel 12** playing font **preset 2** ("key click", the self-ending chiff instrument): `low` → velocity 45, `high` → 75; fixed channel gain CC 7 = 64 (its gain knob, never mirrored); the click voice SELF-ENDS (≤60 ms) — no noteoff tracking, not in `held_notes_`, no bellows interaction. Requires the preset-2 font (harmonium_v3.sf2): if the selection fails (v2 font) the layer is a **silent no-op** (`click_preset_ok_` guard) |
+| `variation` | enum | `on` | `on` \| `off` (case-sensitive, exact) | **live, next NoteOn** — consulted per accepted NoteOn; pre-init storage applies at init | `on` / `off` | `PLUGIN_INVALID_PARAM` (`1`, `OFF`, `"off "`, empty); state unchanged | deterministic PRNG (`std::mt19937`, fixed seed 20260919) jitters ONLY the velocity handed to FluidSynth: ±1..3 on the main/layer voices' bellows velocity, ±4..8 on the click velocity; anti-repeat rule (redraws while equal to the previous draw) so consecutive notes never get the same variation; clamped 1–127. The bellows reference latch / baton-pass bookkeeping stays EXACT (raw press velocities). `off` = exact velocities (byte-comparable against Phase 5) |
 
 ## General notes (apply to every key)
 
@@ -47,10 +49,11 @@ HANDOVER.md "Suggested next steps"); the offline renderer
   stops are config-controlled. Everything else in `handle_midi_event`
   forwards to FluidSynth on the incoming channel.
 - **Reserved internal channels (collision caveat):** 15 = octave coupler,
-  14 = sub-octave, 13 = drone. MIDI input arriving on these channels from a
-  controller collides with the router/drone voices (the Q49 sends on one
-  channel only). The drone (unlike the layers) also never interacts with the
-  uniform-bellows state: it is a fixture, not a phrase key.
+  14 = sub-octave, 13 = drone, 12 = key click. MIDI input arriving on these
+  channels from a controller collides with the router/drone/click voices
+  (the Q49 sends on one channel only). The drone and click layers (unlike
+  the coupler/sub layers) never interact with the uniform-bellows state:
+  fixtures, not phrase keys.
 - **CC 123 (All Notes Off)** on ANY channel: `fluid_synth_all_notes_off` on
   all 16 channels, held-note/bellows state reset, drone sounding-note
   container cleared (see the `drone` row for the restart semantics).
@@ -63,3 +66,4 @@ HANDOVER.md "Suggested next steps"); the offline renderer
 - Phase 3 (2026-09-19): `stop`.
 - Phase 4 (2026-09-19): `coupler`, `sub_octave`.
 - Phase 5 (2026-09-19): `drone`, `drone_level`; this registry created.
+- Phase 6 (2026-09-19): `key_click`, `variation` (14 keys total).
