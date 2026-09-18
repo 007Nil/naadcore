@@ -8,20 +8,25 @@ clips (tests/references/) are gitignored.
 
 ```
 tests/
-├── midi/                  # 7 generated test tracks (format 0, ch 0, 120 BPM,
-│                          #   no CCs, no program changes) — tracked in git
+├── midi/                  # 7 base test tracks (T1–T7, format 0, ch 0,
+│                          #   120 BPM, no CCs, no program changes) +
+│                          #   T8/T9 Phase 3 probe tracks — tracked in git
 ├── scripts/
 │   ├── gen_midi.py        # regenerates tests/midi/ (pure stdlib, no mido)
 │   ├── render_sf2.sh      # offline FluidSynth render of a track
 │   ├── capture_live.sh    # live capture through CLI -> plugin -> audio
 │   ├── render_plugin.cpp  # plugin-in-loop offline renderer (ad hoc)
 │   ├── run_render_plugin.sh # compiles+runs render_plugin.cpp (ad hoc)
+│   ├── derive_sf2.py      # Phase 3 SF2 surgery: builds harmonium_v2.sf2
+│   │                      #   (double-reed detuned preset) from the original
+│   ├── am_spectrum.py     # Phase 3 AM-band spectrum: top AM components per
+│   │                      #   note segment (separates beat from in-sample AM)
 │   ├── sf2_audit.py       # SF2 binary structure dump (Phase 1 audit)
 │   └── run_config_tests.sh# compiles+runs test_plugin_config.cpp (ad hoc,
 │                          #   not wired into the project CMake build)
 ├── analyze.py             # numpy WAV analysis (onset/release/AM/peak/RMS)
 ├── test_plugin_config.cpp # config-seam tests (gain/reverb/chorus +
-│                          #   attack_ms/release_ms live keys, 76 checks)
+│                          #   attack_ms/release_ms + stop live keys, 96 checks)
 ├── renders/               # rendered/captured WAVs (gitignored)
 ├── references/            # personal-use reference clips (gitignored)
 ├── RESULTS.md             # A/B score sheet + objective measurements
@@ -73,14 +78,19 @@ tests/scripts/capture_live.sh tests/midi/T1_single_note_envelope.mid
 python3 tests/analyze.py tests/renders/baseline_phase0_sf2_T1_single_note_envelope.wav
 python3 tests/analyze.py tests/renders/<capture>.wav <timing.txt>
 
-# 6. Config-seam unit tests (gain/reverb/chorus/attack_ms/release_ms)
+# 6. Config-seam unit tests (gain/reverb/chorus/attack_ms/release_ms/stop)
 tests/scripts/run_config_tests.sh
 
 # 7. Offline render through the REAL plugin (no audio hardware needed;
-#    reflects voicing, envelope generators, bellows velocity — which
-#    render_sf2.sh cannot). Real-time: ~1.15x track length.
+#    reflects voicing, envelope generators, bellows velocity, reed stops —
+#    which render_sf2.sh cannot). Real-time: ~1.15x track length.
 tests/scripts/run_render_plugin.sh tests/midi/T1_single_note_envelope.mid \
     tests/renders/my_plugin_render.wav 3
+
+# 7b. Same, in the double-reed stop (any plugin config key can be passed
+#     as trailing KEY=VALUE pairs, applied via set_config before init)
+tests/scripts/run_render_plugin.sh tests/midi/T1_single_note_envelope.mid \
+    tests/renders/my_plugin_render_double.wav 3 stop=double
 ```
 
 Timing files are plain text: `start_s end_s label` per line (see
@@ -135,6 +145,56 @@ output to the requested path.
 - Validated on T1/T4 against the live captures: peak levels identical,
   release behavior matches (see RESULTS.md Phase 2 section).
 
+## Phase 3: derived SoundFont + reed stops (2026-09-19)
+
+`tests/scripts/derive_sf2.py` builds the in-repo double-reed font from the
+original (which is never modified):
+
+```bash
+python3 tests/scripts/derive_sf2.py \
+    /home/nil/harmonium-companion/harmonium.sf2 \
+    plugins/harmonium/soundfonts/harmonium_v2.sf2 4 "harmonium double"
+```
+
+- Args: `<in.sf2> <out.sf2> [detune_cents (default 4)] [preset_name]`.
+- The committed `plugins/harmonium/soundfonts/harmonium_v2.sf2` was generated
+  with the defaults above (+4 cents). Preset 0 is byte-identical behavior to
+  the original font; preset 1 duplicates every key zone with fineTune=+4.
+- Regenerating: the script only needs the original font; sample data is
+  referenced, so the derived file grows by <1 KB.
+- Validate with `python3 tests/scripts/sf2_audit.py
+  plugins/harmonium/soundfonts/harmonium_v2.sf2` (expect 2 presets /
+  2 instruments, doubled zones with `fineTune=4`) and
+  `printf 'load <font>\ninst <font-id>\nquit\n' | fluidsynth`.
+
+Config overrides in the plugin-in-loop renderer (Phase 3):
+
+```bash
+tests/scripts/run_render_plugin.sh tests/midi/T1_single_note_envelope.mid \
+    tests/renders/my_stop_double.wav 3 stop=double
+```
+
+Any number of `KEY=VALUE` pairs after the tail argument is applied via
+`plugin->set_config()` before `init()` (the pre-init storage path), so every
+plugin config key is renderable: `stop=double`, `attack_ms=15`,
+`soundfont_path=/path/to.sf2`, ... A rejected pair aborts the render.
+
+`render_sf2.sh` now defaults to the in-repo derived font; set
+`HARMONIUM_SOUNDFONT=/path/to.sf2` to use any other font.
+
+Phase 3 probe tracks:
+
+| Track | Purpose |
+|---|---|
+| T8_program_change_probe | program change 1 + 4 s note 60 — proves PROGRAM_CHANGE is ignored (single-carrier spectrum in stop=single despite PC 1 in the file) |
+| T9_beat_probe | notes 43/60/79 held 6 s each — fine AM resolution (~0.2 Hz bins) for beat-rate measurement (use with `am_spectrum.py`) |
+
+`tests/scripts/am_spectrum.py <wav> <timing.txt> [n_peaks] [pad0] [pad1]`
+lists the strongest AM components per note segment in the 0.1–5 Hz band
+(RMS-envelope FFT) — use it to separate the detune beat from the in-sample
+~3 Hz beating (RESULTS.md Phase 3 has the numbers).
+
+
 ## Reference-clip workflow
 
 Reference harmonium recordings go in `tests/references/` (gitignored —
@@ -163,3 +223,9 @@ Score reference vs old vs new per track in `tests/RESULTS.md`.
 | T5_drone_plus_melody | drone stability with melody above |
 | T6_repertoire_phrase | musical realism: bhajan chords, grace notes, sustained Sa |
 | T7_velocity_sweep | velocity → amplitude/timbre mapping |
+| T8_program_change_probe | (Phase 3) program-change ignore proof, single 4 s note 60 |
+| T9_beat_probe | (Phase 3) 6 s notes 43/60/79 for beat-rate measurement |
+
+T8/T9 are hand-generated probe tracks (small inline Python writers, same
+VLQ/format-0 technique as gen_midi.py) — they are committed, not produced by
+gen_midi.py.

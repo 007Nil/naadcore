@@ -163,6 +163,113 @@ plugin verification is now possible for future phases.
 Captures/renders: `tests/renders/20260918_{T1,T4}_phase{1,2}_live.wav`,
 `20260918_{T1,T4}_phase2_pluginrender.wav` (gitignored).
 
+## Phase 3: reed stops — 2-reed detuned layering (2026-09-19)
+
+`stop=single` = preset 0 of the derived font (today's sound); `stop=double`
+= preset 1, every key zone duplicated with `fineTune = +4 cents` (see
+HANDOVER.md "Reed stops", docs/HARMONIUM_SF2_AUDIT.md Phase 3 disposition).
+All renders below are **plugin-in-loop** (`run_render_plugin.sh`), font =
+`plugins/harmonium/soundfonts/harmonium_v2.sf2` unless stated.
+
+### Derived font + preset 0 equivalence
+
+- `sf2_audit.py` on the derived font: 2 presets / 2 instruments; preset 0
+  zones byte-identical; "harmonium double" has 14 doubled key-zone pairs
+  (`fineTune=4`) + one global zone per instrument. File 6,617,820 bytes
+  (+476 vs original — sample data referenced, not copied).
+- `fluidsynth -F` offline render of T1, preset 0, original font vs derived
+  font: **sample-exact, 0 LSB difference** (6.62 MB stereo compared).
+- Plugin-in-loop T1, stop=single, v2 font vs original font (via
+  `soundfont_path` config override): peaks/RMS/AM identical
+  (−25.7/−41.6/−21.9/−26.1 dBFS, AM 2.97/2.97/0.81/3.25 Hz); onset
+  differences (29↔34.8 ms etc.) are the real-time renderer's ±6 ms event
+  jitter, not a font difference.
+
+### T1 sustained notes: single vs double
+
+| Note | stop | peak dBFS | rms dBFS | onset ms | rel ms | AM Hz | AM dB |
+|---|---|---|---|---|---|---|---|
+| 60 v100 | single | -25.7 | -35.4 | 29.0 | 307.7 | 2.97 | 3.6 |
+| 60 v100 | **double** | -22.7 | -32.4 | 23.2 | 313.5 | 1.35 | 6.7 |
+| 60 v40 | single | -41.6 | -51.3 | 29.0 | 278.6 | 2.97 | 3.6 |
+| 60 v40 | **double** | -38.6 | -48.3 | 23.2 | 284.4 | 1.35 | 6.7 |
+| 43 v100 | single | -21.9 | -35.0 | 58.0 | 307.7 | 0.81 | 3.8 |
+| 43 v100 | **double** | -20.5 | -32.2 | 29.0 | 319.3 | 2.43 | 4.7 |
+| 79 v100 | single | -26.1 | -36.1 | 23.2 | 307.7 | 3.25 | 6.4 |
+| 79 v100 | **double** | -20.7 | -33.1 | 11.6 | 313.5 | 3.79 | 11.1 |
+
+Two reeds sum to +1.4…+5.4 dB peaks (partial coherence), AM depth grows
+(3.6→6.7 dB at note 60; 6.4→11.1 dB at note 79) and the AM argmax moves off
+the in-sample rate — the slow beat is in. T9 (6 s notes, ~0.19 Hz bins)
+resolves the components (`am_spectrum.py`):
+
+| Note | single: top AM components | double: top AM components |
+|---|---|---|
+| 43 | 0.60, 3.00 (−6.4) | 0.60, 2.40 (−1.3), 1.40 (−4.8), 2.80 (−5.0), 1.80 (−6.0), 3.40 (−6.2) |
+| 60 | 3.00, 0.40 (−2.7), 1.20 (−10.2) | 2.00, 1.20 (−0.3), 3.00 (−6.9), 0.40 (−8.9), 3.80 (−10.1) |
+| 79 | 3.40, 1.60 (−17.4) | 3.80, 0.60 (−16.3), 1.60 (−22.7), 2.20 (−23.7) |
+
+Honest caveat: the RMS-envelope FFT of a *sum* mixes the beat (and its
+harmonics — each reed partial k beats at k·Δf) with the in-sample AM, so the
+envelope spectrum is a comb, not a single clean beat line. The authoritative
+beat measurement is the raw-waveform carrier-line FFT (two spectral lines
+per note separated by the beat):
+
+| Note | Font pitch (single) | Expected beat (+4¢) | Measured carriers (double) | Measured beat |
+|---|---|---|---|---|
+| 43 | 103.33 Hz | 0.24 Hz | not separated | < 0.19 Hz (bin limit — 6 s window cannot resolve 0.24 Hz; envelope comb confirms a slow component) |
+| 60 | 277.04 Hz | 0.64 Hz | 276.96 / 277.59 Hz | **0.56 Hz** |
+| 79 | 832.22 Hz | 1.92 Hz | 832.16 / 834.07 Hz | **1.85 Hz** |
+
+Measured beats sit 0.5 bin below expected (effective detune 3.5–3.8¢ vs
+requested 4¢ — within the FFT resolution). Target 0.3–2 Hz: hit at notes
+60/79; note 43's 0.24 Hz beat is marginally below (audible as very slow
+shimmer; raise D or clamp the low register if it matters — open).
+
+### Pitch check
+
+Detune is asymmetric by design (zones at 0¢ and +4¢, mean +2¢): note 60's
+carriers average 277.28 Hz vs single's 277.04 Hz → **+1.5 cents** —
+imperceptible, pitch stable. Side observation (pre-existing, both stops):
+the font plays ~92–104 cents sharp vs A440 equal temperament (103.3/98.0,
+277.0/261.6, 832.2/784.0) — the samples' own tuning, unchanged by Phase 3.
+
+### PROGRAM_CHANGE policy proof (T8)
+
+T8 contains a program change to program 1 before the note. Plugin-in-loop,
+`stop=single`: spectrum shows a **single carrier** (276.9 Hz) — the program
+change did NOT switch to the double preset. Same file with
+`stop=double`: two carriers 0.5 Hz apart — config-controlled stops work.
+(Also covered by 96/96 config tests: PC events are swallowed with
+PLUGIN_OK, notes keep playing.)
+
+### T2 legato / T4 staccato in double mode
+
+| Metric | single | double |
+|---|---|---|
+| T2 peak / rms dBFS | −22.9 / −40.8 | −19.8 / −38.3 |
+| T2 onsets / releases | 17.4 ms / 63.9 ms | 11.6 ms / 63.9 ms |
+| T4 onsets detected | 80/80 | **80/80** |
+| T4 mean note peak / dip | −28.2 / −55.7 dBFS | −24.1 / −52.3 dBFS |
+| T4 contrast mean/min | 27.5 / 26.7 dB | **28.2 / 25.8 dB** |
+
+No glitching, onsets as distinct as single mode, no voice-overflow messages
+in any render log (2 voices per note, FluidSynth polyphony 256 default).
+(Note: the Phase 2 doc's T4 contrast numbers used a different dip window;
+the single-vs-double comparison here uses one consistent method.)
+
+### Config tests / build
+
+- `run_config_tests.sh`: **96/96** checks (was 76; +20 for the `stop` key:
+  default, valid set/get, live switch, pre-init storage + apply at init,
+  strict rejection, PC-ignored handling).
+- Clean build (rm -rf build): **0 warnings** (-Wall -Wextra -Wpedantic).
+- Live CLI smoke: startup logs show the in-repo font path and
+  `Synth stop: single`. Full live capture skipped: `capture_live.sh` has no
+  config plumb (cannot set `stop`); plugin-in-loop renders cover it.
+
+Renders: `tests/renders/p3_*.wav` (gitignored).
+
 ## Listening notes
 
 (reference clips pending — see tests/README.md for the workflow)
@@ -181,3 +288,8 @@ Captures/renders: `tests/renders/20260918_{T1,T4}_phase{1,2}_live.wav`,
   semitones — expect timbre thinning up high (A3 in the score sheet).
 - Velocity 20 renders around -53 dBFS peak (phase1) — quiet but cleanly
   above the s16 noise floor.
+- Phase 3 (2026-09-19): derived font `harmonium_v2.sf2` — preset 0 is
+  sample-exact vs the original font; the +4¢ doubled zones produce the
+  expected slow beat (0.56 Hz @ note 60, 1.85 Hz @ note 79) on top of the
+  in-sample ~3 Hz beating. Font plays ~1 semitone sharp vs A440 ET
+  (pre-existing, both stops).

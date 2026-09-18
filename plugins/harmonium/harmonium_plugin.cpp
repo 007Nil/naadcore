@@ -108,7 +108,17 @@ PluginResult HarmoniumPlugin::init(const char* audio_driver) {
         std::cerr << "Failed to load SoundFont: " << soundfont_path_ << std::endl;
         return PLUGIN_ERROR;
     }
-    
+
+    // Deterministic program state: sfload's reset behavior is not part of
+    // the contract, so select preset 0 explicitly on all channels, then
+    // apply the configured stop on top.
+    const int midi_channels_after_load = fluid_synth_count_midi_channels(synth_);
+    for (int ch = 0; ch < midi_channels_after_load; ++ch) {
+        fluid_synth_program_select(synth_, ch, soundfont_id_, 0, 0);
+    }
+    apply_stop();
+    std::cout << "Synth stop: " << stop_ << std::endl;
+
     return PLUGIN_OK;
 }
 
@@ -150,6 +160,30 @@ void HarmoniumPlugin::apply_envelope_gens() {
     for (int ch = 0; ch < midi_channels; ++ch) {
         fluid_synth_set_gen(synth_, ch, GEN_VOLENVATTACK, attack_tc);
         fluid_synth_set_gen(synth_, ch, GEN_VOLENVRELEASE, release_tc);
+    }
+}
+
+int HarmoniumPlugin::stop_preset_index(const std::string& stop) {
+    // Preset layout of the derived font (plugins/harmonium/soundfonts/
+    // harmonium_v2.sf2, tests/scripts/derive_sf2.py): preset 0 "harmonium"
+    // = single reed, preset 1 "harmonium double" = detuned unison pair.
+    if (stop == "single") {
+        return 0;
+    }
+    if (stop == "double") {
+        return 1;
+    }
+    return -1;
+}
+
+void HarmoniumPlugin::apply_stop() {
+    if (!synth_ || soundfont_id_ < 0) {
+        return;
+    }
+    const int preset = stop_preset_index(stop_);
+    const int midi_channels = fluid_synth_count_midi_channels(synth_);
+    for (int ch = 0; ch < midi_channels; ++ch) {
+        fluid_synth_program_select(synth_, ch, soundfont_id_, 0, preset);
     }
 }
 
@@ -259,7 +293,11 @@ PluginResult HarmoniumPlugin::handle_midi_event(const MidiEvent& event) {
         }
         
         case MidiEvent::PROGRAM_CHANGE: {
-            fluid_synth_program_change(synth_, event.channel, event.data1);
+            // Deliberately IGNORED (Phase 3 policy): stops are
+            // config-controlled ("stop" key), and forwarding program
+            // changes to FluidSynth would silently switch reed stops — a
+            // stray program change would wreck the voicing. Future idea:
+            // map program changes to MIDI-controlled stop switches.
             break;
         }
         
@@ -311,6 +349,9 @@ std::string HarmoniumPlugin::get_config(const char* key) {
     }
     if (k == "release_ms") {
         return std::to_string(release_ms_);
+    }
+    if (k == "stop") {
+        return stop_;
     }
 
     return "";
@@ -395,6 +436,20 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
         release_ms_ = static_cast<int>(ms);
         if (synth_) {
             apply_envelope_gens();
+        }
+        return PLUGIN_OK;
+    }
+
+    if (k == "stop") {
+        const std::string v = value;
+        if (stop_preset_index(v) < 0) {
+            return PLUGIN_INVALID_PARAM;
+        }
+        stop_ = v;
+        // Apply immediately when the synth + font are ready; otherwise
+        // init() applies the stored stop right after sfload.
+        if (synth_ && soundfont_id_ >= 0) {
+            apply_stop();
         }
         return PLUGIN_OK;
     }

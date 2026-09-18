@@ -2,10 +2,14 @@
 # Compile and run the ad-hoc plugin-in-loop offline renderer.
 #
 # Usage: run_render_plugin.sh <track.mid> <output.wav> [tail_seconds]
+#                             [KEY=VALUE ...]
 #
 # Renders a MIDI track through the REAL harmonium plugin (dlopen'd, FluidSynth
 # "file" audio driver) so offline renders reflect all plugin behavior — voicing,
-# envelope generators, uniform bellows velocity. Alternative to the live
+# envelope generators, uniform bellows velocity, and (Phase 3) any plugin
+# config key passed as trailing KEY=VALUE pairs (applied via set_config before
+# init; e.g. `run_render_plugin.sh T1.mid out.wav 3 stop=double`).
+# Alternative to the live
 # capture path (capture_live.sh) that needs no ALSA/PipeWire. Real-time render:
 # a 20 s track takes ~23 s wall clock.
 #
@@ -14,8 +18,8 @@
 
 set -euo pipefail
 
-if [ $# -lt 2 ] || [ $# -gt 3 ]; then
-    echo "usage: $0 <track.mid> <output.wav> [tail_seconds]" >&2
+if [ $# -lt 2 ]; then
+    echo "usage: $0 <track.mid> <output.wav> [tail_seconds] [KEY=VALUE ...]" >&2
     exit 1
 fi
 

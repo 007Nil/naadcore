@@ -59,6 +59,14 @@ private:
     int attack_ms_ = 10;
     int release_ms_ = 200;
 
+    // Reed stops (Phase 3). "single" = preset 0 of the loaded SoundFont
+    // (today's sound); "double" = preset 1, two slightly-detuned unison
+    // reeds per note (the signature slow beating / shimmer). The stop is
+    // config-controlled ONLY: incoming MIDI PROGRAM_CHANGE events are
+    // deliberately ignored so a stray program change cannot wreck the
+    // voicing (see HANDOVER.md "Reed stops").
+    std::string stop_ = "single";
+
     // Uniform bellows velocity: a real harmonium's bellows drive all open
     // reeds at the same pressure, so keys pressed together sound at the
     // first key's velocity. Each held key remembers its original press
@@ -81,6 +89,15 @@ private:
     /// set_config changes). Safe to call before the SoundFont is loaded —
     /// channel generators survive sfload and program resets.
     void apply_envelope_gens();
+
+    /// Map the stop name to its SoundFont preset index ("single" -> 0,
+    /// "double" -> 1). Returns -1 for unknown names (callers validate
+    /// before storing, so this is defensive).
+    static int stop_preset_index(const std::string& stop);
+
+    /// fluid_synth_program_select the stop's preset on ALL MIDI channels
+    /// (no-op before the synth + SoundFont are ready).
+    void apply_stop();
 };
 
 } // namespace naadcore

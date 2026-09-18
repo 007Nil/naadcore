@@ -1,7 +1,11 @@
 // Ad-hoc offline renderer with the harmonium plugin IN the loop.
 //
 // Usage: render_plugin <libharmonium_plugin.so> <track.mid> <out.wav>
-//                     [tail_seconds (default 3)]
+//                     [tail_seconds] [KEY=VALUE ...]
+//
+// KEY=VALUE pairs (Phase 3) are applied via plugin->set_config() BEFORE
+// init(), i.e. exactly the pre-init storage path the plugin supports —
+// init() then applies them (e.g. stop=double selects the detuned preset).
 //
 // Why this exists: the fluidsynth CLI used by tests/scripts/render_sf2.sh
 // renders with stock synth settings and cannot load a NaadCore plugin, so
@@ -38,6 +42,7 @@
 #include <string>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -217,16 +222,27 @@ bool parse_track(const uint8_t* p, const uint8_t* end, uint32_t division,
 } // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 4 || argc > 5) {
+    if (argc < 4) {
         std::cerr << "usage: " << argv[0]
                   << " <libharmonium_plugin.so> <track.mid> <out.wav>"
-                     " [tail_seconds]" << std::endl;
+                     " [tail_seconds] [KEY=VALUE ...]" << std::endl;
         return 1;
     }
     const std::string plugin_path = argv[1];
     const std::string track_path = argv[2];
     const std::string out_path = argv[3];
-    const double tail_s = (argc > 4) ? std::stod(argv[4]) : 3.0;
+    double tail_s = 3.0;
+    std::vector<std::pair<std::string, std::string>> config;
+    for (int i = 4; i < argc; ++i) {
+        const std::string arg = argv[i];
+        const size_t eq = arg.find('=');
+        if (eq == std::string::npos) {
+            // first non KEY=VALUE argument is the tail seconds
+            tail_s = std::stod(arg);
+            continue;
+        }
+        config.emplace_back(arg.substr(0, eq), arg.substr(eq + 1));
+    }
 
     // ---- load MIDI file -------------------------------------------------
     std::vector<uint8_t> midi;
@@ -324,6 +340,15 @@ int main(int argc, char** argv) {
         return 1;
     }
     auto* plugin = create();
+    for (const auto& [key, value] : config) {
+        const naadcore::PluginResult r =
+            plugin->set_config(key.c_str(), value.c_str());
+        if (r != naadcore::PLUGIN_OK) {
+            std::cerr << "error: set_config(" << key << ", " << value
+                      << ") rejected" << std::endl;
+            return 1;
+        }
+    }
     if (plugin->init("file") != naadcore::PLUGIN_OK) {
         std::cerr << "plugin init failed" << std::endl;
         return 1;

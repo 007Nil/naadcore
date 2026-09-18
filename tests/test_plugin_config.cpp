@@ -1,5 +1,5 @@
-// Config-seam tests for the harmonium plugin (gain/reverb/chorus and
-// Phase 2 envelope attack_ms/release_ms live keys).
+// Config-seam tests for the harmonium plugin (gain/reverb/chorus, Phase 2
+// envelope attack_ms/release_ms live keys, Phase 3 stop key).
 //
 // Loads libharmonium_plugin.so via dlopen (same mechanism as PluginManager)
 // and exercises set_config/get_config, including live changes after init().
@@ -65,6 +65,7 @@ int main(int argc, char** argv) {
     check_eq("default audio_driver", p->get_config("audio_driver"), "alsa");
     check_eq("default attack_ms", p->get_config("attack_ms"), "10");
     check_eq("default release_ms", p->get_config("release_ms"), "200");
+    check_eq("default stop", p->get_config("stop"), "single");
 
     // init (no audio driver started)
     check_result("init", p->init(nullptr), naadcore::PLUGIN_OK);
@@ -188,6 +189,25 @@ int main(int argc, char** argv) {
                  naadcore::PLUGIN_OK);
     check_eq("soundfont_path reads", p->get_config("soundfont_path"), "/x");
 
+    // reed stops (Phase 3: stop key, preset mapping single=0 / double=1)
+    check_result("stop double", p->set_config("stop", "double"),
+                 naadcore::PLUGIN_OK);
+    check_eq("stop reads double", p->get_config("stop"), "double");
+    check_result("stop single", p->set_config("stop", "single"),
+                 naadcore::PLUGIN_OK);
+    check_eq("stop reads single", p->get_config("stop"), "single");
+    check_result("stop quad rejected", p->set_config("stop", "quad"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("stop case-sensitive rejected",
+                 p->set_config("stop", "Double"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("stop trailing space rejected",
+                 p->set_config("stop", "single "),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("stop empty rejected", p->set_config("stop", ""),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_eq("stop unchanged after rejects", p->get_config("stop"), "single");
+
     // unknown keys and null handling
     check_eq("unknown get is empty", p->get_config("bogus"), "");
     check_result("unknown set", p->set_config("bogus", "x"),
@@ -208,25 +228,52 @@ int main(int argc, char** argv) {
     ev.data2 = 0;
     check_result("note off", p->handle_midi_event(ev), naadcore::PLUGIN_OK);
 
+    // PROGRAM_CHANGE policy (Phase 3): incoming program changes are
+    // ignored (stops are config-controlled). The event must be swallowed
+    // without error; the preset is verified separately via plugin-in-loop
+    // renders (a program change left the stop=single render untouched).
+    ev.type = naadcore::MidiEvent::PROGRAM_CHANGE;
+    ev.data1 = 1;
+    check_result("program change ignored", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.data1 = 62;
+    check_result("note on after program change", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("note off after program change", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+
     p->stop_audio();
     destroy(p);
 
     // config set before init is applied at init
     auto* q = create();
     check_result("pre-init gain 2.5", q->set_config("gain", "2.5"),
-                  naadcore::PLUGIN_OK);
+                 naadcore::PLUGIN_OK);
     check_result("pre-init reverb off", q->set_config("reverb", "off"),
-                  naadcore::PLUGIN_OK);
+                 naadcore::PLUGIN_OK);
     check_result("pre-init attack_ms 15", q->set_config("attack_ms", "15"),
-                  naadcore::PLUGIN_OK);
+                 naadcore::PLUGIN_OK);
     check_result("pre-init release_ms 300", q->set_config("release_ms", "300"),
-                  naadcore::PLUGIN_OK);
+                 naadcore::PLUGIN_OK);
+    check_result("pre-init stop double", q->set_config("stop", "double"),
+                 naadcore::PLUGIN_OK);
+    check_eq("pre-init stop stored", q->get_config("stop"), "double");
     check_result("q init", q->init(nullptr), naadcore::PLUGIN_OK);
     check_eq("pre-init gain applied", q->get_config("gain"), "2.500");
     check_eq("pre-init reverb applied", q->get_config("reverb"), "off");
     check_eq("pre-init attack_ms applied", q->get_config("attack_ms"), "15");
     check_eq("pre-init release_ms applied", q->get_config("release_ms"),
              "300");
+    check_eq("pre-init stop applied", q->get_config("stop"), "double");
+    // live stop switch after init
+    check_result("live stop single", q->set_config("stop", "single"),
+                 naadcore::PLUGIN_OK);
+    check_eq("live stop reads single", q->get_config("stop"), "single");
+    check_result("live stop double", q->set_config("stop", "double"),
+                 naadcore::PLUGIN_OK);
+    check_eq("live stop reads double", q->get_config("stop"), "double");
     q->stop_audio();
     destroy(q);
 

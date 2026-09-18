@@ -1,11 +1,19 @@
 # NaadCore Handover — Authoritative State Document
 
-Last updated: 2026-09-18 (harmonium realism Phases 0–2: synth voicing pinned in
-plugin — gain/reverb/chorus defaults + live config keys; runtime envelope
-shaping — attack_ms/release_ms live config keys via FluidSynth channel
-generators; plugin-in-loop offline renderer; test harness under tests/;
-SF2 audited — see docs/HARMONIUM_SF2_AUDIT.md; `--audio-driver` CLI flag
-wired through to plugins; interactive launcher naadcore.sh added)
+Last updated: 2026-09-19 (harmonium realism Phase 3: reed stops — `stop`
+config key (single/double) selecting SoundFont presets in the new in-repo
+derived font plugins/harmonium/soundfonts/harmonium_v2.sf2 (+4¢ detuned
+2-reed layering = the signature slow beating); incoming PROGRAM_CHANGE
+events now IGNORED (stops are config-controlled); CMake default
+HARMONIUM_SOUNDFONT_PATH repointed at the in-repo font (override still
+available); PROGRAM_CHANGE ignore verified objectively; 96/96 config tests;
+see "Reed stops (Phase 3)" below. Phases 0–2 unchanged: synth voicing
+pinned in plugin — gain/reverb/chorus defaults + live config keys; runtime
+envelope shaping — attack_ms/release_ms live config keys via FluidSynth
+channel generators; plugin-in-loop offline renderer (now with KEY=VALUE
+config overrides); test harness under tests/; SF2 audited — see
+docs/HARMONIUM_SF2_AUDIT.md; `--audio-driver` CLI flag wired through;
+interactive launcher naadcore.sh added)
 
 ## Project purpose
 
@@ -32,9 +40,10 @@ PluginManager (core/plugin_manager.cpp, header include/naadcore/plugin_manager.h
 libharmonium_plugin.so (plugins/harmonium/)
   - implements INaadPlugin
   - owns its own FluidSynth settings/synth/audio-driver
-  - SoundFont path compiled in (embedded at build time)
+  - SoundFont path compiled in (embedded at build time; default is the
+    in-repo derived font, see "Reed stops (Phase 3)")
         ↓
-FluidSynth + /home/nil/harmonium-companion/harmonium.sf2 → ALSA audio → speakers
+FluidSynth + plugins/harmonium/soundfonts/harmonium_v2.sf2 → ALSA audio → speakers
 ```
 
 The CLI registers with ALSA under the client name **`naadcore`** and creates a
@@ -66,17 +75,25 @@ naadcore/
 ├── plugins/
 │   ├── README.md                   # Plugin directory overview
 │   └── harmonium/                   # Plugin target: harmonium_plugin
-│       ├── CMakeLists.txt          # Embeds HARMONIUM_SOUNDFONT_PATH, outputs to build/plugins/
+│       ├── CMakeLists.txt          # Embeds HARMONIUM_SOUNDFONT_PATH (default:
+│       │                           #   in-repo harmonium_v2.sf2), outputs to build/plugins/
+│       ├── soundfonts/
+│       │   └── harmonium_v2.sf2    # Derived font (Phase 3, committed): preset 0
+│       │                           #   "harmonium" (byte-identical to the original)
+│       │                           #   + preset 1 "harmonium double" (+4¢ zones)
 │       ├── harmonium_plugin.hpp
 │       └── harmonium_plugin.cpp     # FluidSynth plugin + extern "C" factories
 ├── tests/                          # Realism test harness (re-added with content)
 │   ├── README.md                   # Harness guide, tool status, capture paths
 │   ├── RESULTS.md                  # A/B score sheet + objective measurements
 │   ├── analyze.py                  # WAV analysis (onset/release/AM/peak/RMS)
-│   ├── test_plugin_config.cpp      # Config-seam unit tests (76 checks)
-│   ├── midi/                       # 7 generated test tracks (T1–T7)
+│   ├── test_plugin_config.cpp      # Config-seam unit tests (96 checks)
+│   ├── midi/                       # 7 base test tracks (T1–T7) + T8/T9
+│   │                               #   Phase 3 probe tracks
 │   ├── scripts/                    # gen_midi.py, render_sf2.sh, capture_live.sh,
-│   │                               #   render_plugin.cpp, run_render_plugin.sh, ...
+│   │                               #   render_plugin.cpp, run_render_plugin.sh,
+│   │                               #   derive_sf2.py (Phase 3 SF2 surgery),
+│   │                               #   am_spectrum.py (AM-band spectrum), ...
 │   ├── timings/                    # Note timing files used by analyze.py
 │   ├── renders/                    # Rendered/captured WAVs (gitignored)
 │   └── references/                 # Reference clips (gitignored, personal use)
@@ -136,7 +153,10 @@ Expected console output (order may vary slightly):
 
 ```
 Loading plugin: ./build/plugins/libharmonium_plugin.so
-Loaded SoundFont: /home/nil/harmonium-companion/harmonium.sf2 (ID: 1)
+Synth voicing: gain=0.4 reverb=on chorus=off interp=4th-order
+Synth envelope: attack_ms=10 release_ms=200
+Loaded SoundFont: /home/nil/Projects/Personal/naadcore/plugins/harmonium/soundfonts/harmonium_v2.sf2 (ID: 1)
+Synth stop: single
 Loaded plugin: harmonium v1.0.0 (./build/plugins/libharmonium_plugin.so)
 Plugin: harmonium v1.0.0
 Starting audio...
@@ -217,11 +237,16 @@ The harmonium plugin has no runtime SoundFont flag. The path is baked in at
 compile time:
 
 - `plugins/harmonium/CMakeLists.txt` sets the CMake variable
-  `HARMONIUM_SOUNDFONT_PATH` (default `/home/nil/harmonium-companion/harmonium.sf2`)
+  `HARMONIUM_SOUNDFONT_PATH` (default since Phase 3:
+  `${CMAKE_SOURCE_DIR}/plugins/harmonium/soundfonts/harmonium_v2.sf2` —
+  the in-repo derived font, portable across machines; the original
+  machine-specific `/home/nil/harmonium-companion/harmonium.sf2` remains
+  available via `-D` override)
   and passes it as a `target_compile_definitions(... PRIVATE)` preprocessor macro.
-- `harmonium_plugin.cpp` has a `#ifndef HARMONIUM_SOUNDFONT_PATH` fallback with the
-  same path, then loads it via `fluid_synth_sfload()` during `init()`.
+- `harmonium_plugin.cpp` has a `#ifndef HARMONIUM_SOUNDFONT_PATH` fallback with
+  the same path, then loads it via `fluid_synth_sfload()` during `init()`.
 - Override for custom builds: `cmake -B build -DHARMONIUM_SOUNDFONT_PATH=/path/to.sf2`
+  (or at runtime via the `soundfont_path` config key before `init()`).
 
 ## Uniform Bellows Velocity (harmonium plugin)
 
@@ -281,10 +306,11 @@ Live config keys (via `set_config`/`get_config`, no CLI surface yet):
 | `chorus` | on/off | `fluid_synth_chorus_on` all groups |
 | `attack_ms` | int 1–2000 | vol-env attack via `GEN_VOLENVATTACK` (Phase 2) |
 | `release_ms` | int 1–4000 | vol-env release via `GEN_VOLENVRELEASE` (Phase 2) |
+| `stop` | single/double | reed stop → SoundFont preset via `program_select` (Phase 3) |
 
 Plus the pre-existing keys: `soundfont_path`, `audio_driver`.
 
-Verified: 76/76 config-seam checks pass (`tests/scripts/run_config_tests.sh`);
+Verified: 96/96 config-seam checks pass (`tests/scripts/run_config_tests.sh`);
 live capture peak level matches the offline render exactly (−25.7 dBFS for
 note 60 @ vel 100).
 
@@ -330,6 +356,71 @@ Measured effect (live captures, same analysis pipeline both sides —
 tests/RESULTS.md has the full table): T1 release-to-−60 dB 46–70 ms →
 81–122 ms; T4 staccato 80/80 onsets still distinct, tail at the next onset
 ≈44 dB below the note peak (no smear).
+
+## Reed stops / 2-reed detuned layering (Phase 3, 2026-09-19)
+
+The signature harmonium "slow beating/shimmer": two slightly detuned unison
+reeds per note beat against each other at the difference frequency. Phase 3
+implements a `stop` config key backed by SoundFont presets in a **derived
+font** — the original `/home/nil/harmonium-companion/harmonium.sf2` was
+never modified.
+
+**Derived font** `plugins/harmonium/soundfonts/harmonium_v2.sf2` (committed,
+generated by `tests/scripts/derive_sf2.py`, regenerable):
+
+| Preset | Name | Instrument | Sound |
+|---|---|---|---|
+| bank 0 / prog 0 | harmonium | 0 (byte-identical copy) | today's single-reed sound |
+| bank 0 / prog 1 | harmonium double | 1 (every key zone duplicated with `fineTune = +4¢`) | two detuned unison reeds per note |
+
+Surgery details: preset zones preserved byte-identically for preset 0; the
+duplicate zones copy the zone's full generator list (keyRange, attenuation,
+sample refs, loop offsets) and only add fineTune (gen 52, spec range ±99¢).
+Bag/gen indices renumbered, EOI/EOP terminals kept, sizes recomputed; the
+6.6 MB sample data is referenced, not duplicated (+476 bytes total).
+Validation: `sf2_audit.py` shows 2 presets/2 instruments/doubled zones;
+FluidSynth loads it; preset 0 renders **sample-exact** vs the original font.
+
+**Plugin `stop` key** (`set_config`/`get_config`, strict validation like the
+other keys):
+
+| Value | Preset | Meaning |
+|---|---|---|
+| `single` (default) | 0 | single reed — today's sound |
+| `double` | 1 | 2 detuned unison reeds per note (slow beating 0.2–2 Hz) |
+
+- Applied via `fluid_synth_program_select(synth_, ch, soundfont_id_, 0, preset)`
+  on ALL MIDI channels — live when the synth is ready, otherwise stored and
+  applied in `init()` right after `sfload` (which first selects preset 0
+  explicitly on all channels, then the stored stop — deterministic regardless
+  of FluidSynth's reset behavior). Log line: `Synth stop: <name>`.
+- **PROGRAM_CHANGE policy change:** incoming PROGRAM_CHANGE events are now
+  **IGNORED** (`handle_midi_event` swallows them, PLUGIN_OK). Rationale:
+  stops are config-controlled; forwarding program changes to FluidSynth
+  would silently switch reed stops (a stray program change would wreck the
+  voicing). Verified objectively (T8 probe: a program change to program 1
+  in the MIDI file leaves the stop=single render single-reed). **Future
+  idea:** program changes could become MIDI-mapped stop switches.
+- Uniform bellows velocity + envelope shaping are untouched.
+
+**Beat-rate expectations** (beat = f·(2^(D/1200)−1), D = 4¢; measured on the
+T9 probe via carrier-line FFT, plugin-in-loop renders):
+
+| Note | Font pitch | Expected beat | Measured beat |
+|---|---|---|---|
+| 43 | 103.33 Hz | 0.24 Hz | < 0.19 Hz (below the 6 s analysis window's resolution; comb visible in the envelope spectrum) |
+| 60 | 277.04 Hz | 0.64 Hz | 0.56 Hz |
+| 79 | 832.22 Hz | 1.92 Hz | 1.85 Hz |
+
+Pitch is stable (mean +1.5¢ by design; detune is 0¢/+4¢, not symmetric).
+Objective numbers: tests/RESULTS.md Phase 3. `four` (2 unison + octave
+pair) was **not** implemented — the core is solid but the octave coupler
+(Phase 4) supersedes the octave-pair half; revisit there.
+
+**Renderer support:** `run_render_plugin.sh` now accepts trailing
+`KEY=VALUE` config pairs applied via `set_config` before `init()` —
+e.g. `run_render_plugin.sh T1.mid out.wav 3 stop=double`. `render_sf2.sh`
+defaults to the in-repo derived font (`HARMONIUM_SOUNDFONT` env overrides).
 
 ## Harmonium realism test harness (Phase 0, 2026-09-18)
 
@@ -392,13 +483,17 @@ To clear a stuck note in a live instance:
 
 ## Suggested next steps
 
-1. **Harmonium realism Phases 3+** (active effort — Phases 0–2 complete):
-   - Phase 3: 2-reed detuned layering via SF2 presets + `stop` config key
-   - Phase 4: octave coupler / sub-octave layer router; duplicate-NoteOn
-     ignore; CC 123 across all 16 channels
+1. **Harmonium realism Phases 4+** (active effort — Phases 0–3 complete):
+   - Phase 4: octave coupler / sub-octave layer router (supersedes the
+     unimplemented `four` stop's octave pair); duplicate-NoteOn ignore;
+     CC 123 across all 16 channels
    - Phase 5: drone (unpika) + config-key registry doc
    - Phase 7 (envelope work can't fix this): high-register stretch — keys
      65–84 are one F4 sample stretched up to +19 semitones; needs new samples
+   - Optional Phase 3 polish: `four` stop (2 unison + octave pair) in the
+     derived font if the coupler doesn't cover it; raise D at the low end
+     (note 43's beat 0.24 Hz is at the slow edge); live `stop` switching
+     via capture_live.sh (needs a config plumb)
     - Reference clips still pending (yt-dlp/sox not installable non-interactively)
 2. **Multiple plugin support in CLI**: accept several `--plugin` flags or a
    plugin directory; route MIDI to all loaded plugins (PluginManager already

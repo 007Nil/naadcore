@@ -16,9 +16,13 @@ add_library(harmonium_plugin SHARED
 )
 
 # SoundFont path (can be overridden via -DHARMONIUM_SOUNDFONT_PATH=... during cmake)
-# Default: look for harmonium.sf2 in the project root
+# Default: the in-repo derived font (Phase 3) — portable, no machine-specific
+# paths. It carries preset 0 "harmonium" (identical to the original font) and
+# preset 1 "harmonium double" (2-reed detuned layering; see
+# tests/scripts/derive_sf2.py and docs/HARMONIUM_SF2_AUDIT.md).
 if(NOT HARMONIUM_SOUNDFONT_PATH)
-    set(HARMONIUM_SOUNDFONT_PATH "/home/nil/harmonium-companion/harmonium.sf2")
+    set(HARMONIUM_SOUNDFONT_PATH
+        "${CMAKE_SOURCE_DIR}/plugins/harmonium/soundfonts/harmonium_v2.sf2")
 endif()
 
 target_compile_definitions(harmonium_plugin PRIVATE
