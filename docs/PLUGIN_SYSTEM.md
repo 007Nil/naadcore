@@ -318,3 +318,4 @@ file ./build/plugins/libharmonium_plugin.so
 - Each plugin manages its own audio driver and SoundFont
 - The SoundFont path is a compile-time constant, not a runtime configuration
 - The plugin system is designed for local, project-specific plugins, not system-wide distribution
+- Instrument physics (e.g., the harmonium's uniform bellows velocity — keys pressed together sound at the first key's velocity, with the reference passing to the oldest still-held key when it is released, see `HANDOVER.md`) belongs inside plugins, not in the routing layer

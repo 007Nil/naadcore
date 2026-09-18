@@ -52,6 +52,15 @@ naadcore/
 
 5. **HarmoniumPlugin** (`plugins/harmonium/`)
    - Reference plugin: own FluidSynth instance, compile-time SoundFont path
+   - Uniform bellows velocity: keys pressed together sound at the first key's
+     velocity; when that key is released, the reference passes to the oldest
+     still-held key's original press velocity (see "Uniform Bellows Velocity"
+     in `HANDOVER.md`)
+   - Pinned synth voicing (Phase 1, 2026-09-18): gain 0.4, reverb on
+     ("small room": roomsize 0.2 / damp 0.0 / width 0.3 / level 0.4),
+     chorus off, 4th-order interpolation; live config keys `gain`, `reverb`,
+     `chorus` via `set_config`/`get_config` (see `HANDOVER.md`)
+   - SoundFont structure audited: see `docs/HARMONIUM_SF2_AUDIT.md`
 
 6. **NaadCoreCLI** (`apps/naadcore-cli/main.cpp`)
    - Parses `--plugin`, `--midi`, `--audio-driver`, `--help`
@@ -185,7 +194,7 @@ If needed, connect manually: `aconnect 20:0 <client>:0`.
 2. **No plugin configuration** - `set_config/get_config` not wired to CLI
 3. **Timestamp not populated** - `MidiEvent::timestamp` stays 0
 4. **No raga/notation/sargam** - Pure MIDI interface
-5. **No bellows physics** - Harmonium-specific behavior not modeled
+5. **Partial bellows modeling** - Uniform chord velocity implemented (plugin-local); pressure/expression (CC#11) not modeled
 6. **No GUI/visualizer** - Terminal-only interface
 
 ### Technical Limitations
@@ -196,6 +205,16 @@ If needed, connect manually: `aconnect 20:0 <client>:0`.
 4. **No latency optimization** - Could use poll() instead of sleep
 
 ## Testing
+
+### Realism test harness (tests/)
+
+The harmonium realism effort has a dedicated harness under `tests/` — see
+`tests/README.md`. It provides 7 standard MIDI test tracks (T1–T7: envelope,
+legato, chords, staccato, drone, repertoire phrase, velocity sweep), offline
+FluidSynth rendering, live capture through the full CLI → plugin → audio
+chain (PipeWire `parecord --monitor-stream` on this machine), objective WAV
+analysis (`tests/analyze.py`), and an A/B score sheet (`tests/RESULTS.md`).
+Config-seam unit tests: `tests/scripts/run_config_tests.sh` (43 checks).
 
 ### Verify Build
 
@@ -285,4 +304,6 @@ pm.route_midi_event(event);   // fan-out to all loaded plugins
 - `docs/NAADCORE_ARCHITECTURE.md` - Architecture overview
 - `docs/PLUGIN_SYSTEM.md` - Plugin system documentation
 - `docs/PLUGIN_DEVELOPMENT.md` - Plugin development guide
+- `docs/HARMONIUM_SF2_AUDIT.md` - harmonium.sf2 structure audit (Phase 1 realism work)
+- `tests/README.md` - Realism test harness guide
 - `docs/NAADCORE_MVP_CHALLENGE.md` - Historical MVP record (completed)

@@ -5,6 +5,7 @@
 #include <fluidsynth.h>
 #include <string>
 #include <memory>
+#include <vector>
 
 /**
  * @file harmonium_plugin.hpp
@@ -43,9 +44,28 @@ private:
     fluid_audio_driver_t* driver_;
     std::string audio_driver_;
     std::string soundfont_path_;
+    int soundfont_id_;  ///< ID of the loaded SoundFont (-1 until loaded)
+
+    float gain_ = 0.4f;
+    bool reverb_on_ = true;
+    bool chorus_on_ = false;
     
-    // midi channel state
-    int channel_ = 0;
+    // Uniform bellows velocity: a real harmonium's bellows drive all open
+    // reeds at the same pressure, so keys pressed together sound at the
+    // first key's velocity. Each held key remembers its original press
+    // velocity in press order; when the reference (oldest) key is
+    // released, the baton passes to the next oldest held key's original
+    // velocity. Already-sounding notes are never re-velocityed. Held-note
+    // state ignores MIDI channel (one harmonium, one bellows).
+    struct HeldNote {
+        uint8_t note;
+        uint8_t velocity;  ///< original press velocity
+    };
+    std::vector<HeldNote> held_notes_;  ///< front() = oldest pressed
+    uint8_t reference_velocity_ = 0;
+
+    std::vector<HeldNote>::iterator find_held(uint8_t note);
+    void release_held_note(uint8_t note);
 };
 
 } // namespace naadcore

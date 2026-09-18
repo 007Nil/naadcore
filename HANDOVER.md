@@ -1,6 +1,8 @@
 # NaadCore Handover — Authoritative State Document
 
-Last updated: 2026-09-17 (after MVP removal + plugin-system validation session)
+Last updated: 2026-09-18 (harmonium realism Phases 0–1: synth voicing pinned in
+plugin — gain/reverb/chorus defaults + live config keys; test harness added
+under tests/; SF2 audited — see docs/HARMONIUM_SF2_AUDIT.md)
 
 ## Project purpose
 
@@ -62,21 +64,34 @@ naadcore/
 │       ├── CMakeLists.txt          # Embeds HARMONIUM_SOUNDFONT_PATH, outputs to build/plugins/
 │       ├── harmonium_plugin.hpp
 │       └── harmonium_plugin.cpp     # FluidSynth plugin + extern "C" factories
+├── tests/                          # Realism test harness (re-added with content)
+│   ├── README.md                   # Harness guide, tool status, capture paths
+│   ├── RESULTS.md                  # A/B score sheet + objective measurements
+│   ├── analyze.py                  # WAV analysis (onset/release/AM/peak/RMS)
+│   ├── test_plugin_config.cpp      # Config-seam unit tests (43 checks)
+│   ├── midi/                       # 7 generated test tracks (T1–T7)
+│   ├── scripts/                    # gen_midi.py, render_sf2.sh, capture_live.sh, ...
+│   ├── timings/                    # Note timing files used by analyze.py
+│   ├── renders/                    # Rendered/captured WAVs (gitignored)
+│   └── references/                 # Reference clips (gitignored, personal use)
 └── docs/
     ├── NAADCORE_ARCHITECTURE.md    # Architecture overview (current)
     ├── PLUGIN_SYSTEM.md            # Plugin system design/usage
     ├── PLUGIN_SYSTEM_IMPLEMENTATION.md # Implementation notes (current)
     ├── PLUGIN_DEVELOPMENT.md       # Guide for writing new plugins
+    ├── HARMONIUM_SF2_AUDIT.md      # harmonium.sf2 structure audit (Phase 1)
     ├── NAADCORE_MVP_CHALLENGE.md   # HISTORICAL: MVP design record (completed)
     ├── CODEBASE_ANALYSIS.md        # Analysis of the separate harmonium-companion web project
     └── README.md                   # Technical notes / API reference
 ```
 
-Removed in the last cleanup (do NOT recreate): `apps/harmonium.cpp`,
+Removed in an earlier cleanup (do NOT recreate): `apps/harmonium.cpp`,
 `core/harmonium.hpp`, `include/naadcore/harmonium.hpp`, `core/midi.hpp`
 (duplicate of `include/naadcore/midi.hpp`), `core/plugin_manager.hpp`
-(duplicate of `include/naadcore/plugin_manager.hpp`), empty `tests/`,
-and the `naadcore-harmonium` MVP executable target.
+(duplicate of `include/naadcore/plugin_manager.hpp`),
+and the `naadcore-harmonium` MVP executable target. The empty `tests/`
+directory removed then has since been **re-added with harness content**
+(2026-09-18) — it is now a permanent part of the tree.
 
 Note: `Synthesizer` (FluidSynth wrapper class in core/midi.cpp) is retained as
 core-library API even though the plugin currently embeds its own synth — it is
@@ -192,12 +207,107 @@ compile time:
   same path, then loads it via `fluid_synth_sfload()` during `init()`.
 - Override for custom builds: `cmake -B build -DHARMONIUM_SOUNDFONT_PATH=/path/to.sf2`
 
+## Uniform Bellows Velocity (harmonium plugin)
+
+On a real harmonium the bellows drive every open reed at the same air pressure,
+so a chord sounds uniform no matter how unevenly the fingers press. The
+harmonium plugin models this entirely inside `handle_midi_event()`
+(`plugins/harmonium/harmonium_plugin.cpp`); the CLI, PluginManager, and the
+shared `MidiEvent`/`INaadPlugin` headers are untouched.
+
+Semantics:
+
+- **Reference:** the first NoteOn of a key sequence (no keys currently held)
+  latches its velocity as the bellows **reference velocity** and plays at its
+  own velocity. Every NoteOn arriving while any key is still held plays at the
+  reference velocity instead.
+- **Baton-pass on release:** each held key remembers its ORIGINAL press
+  velocity in press order. When the reference (oldest held) key is released
+  while other keys are still held, the reference passes to the next oldest
+  held key's original press velocity. Example: press n@100, press m@20 (m
+  sounds at 100), release n, press j@60 → j sounds at 20 (m's original).
+  A full release (all keys up) resets the reference; the next NoteOn starts a
+  fresh sequence.
+- **Legato inherits:** a melodic NoteOn while another key is held also plays
+  at the reference velocity (physically faithful; dynamics flatten until all
+  keys are released — accepted trade-off).
+- **No retroactive re-velocity:** already-sounding notes are never re-triggered.
+- **Global bellows:** held-note state ignores the MIDI channel (one harmonium,
+  one bellows); a NoteOn with velocity 0 still counts as a release, and a
+  duplicate NoteOn for an already-held key plays at the reference velocity
+  without changing its recorded original velocity or position.
+- **CC 123 (All Notes Off)** clears the sequence state in addition to the
+  normal FluidSynth passthrough (stuck-note insurance).
+
+State: `std::vector<HeldNote> held_notes_` (`{note, original velocity}`,
+front = oldest pressed) + `uint8_t reference_velocity_` in `HarmoniumPlugin`
+(see `harmonium_plugin.hpp`).
+
+## Synth voicing (Phase 1, 2026-09-18)
+
+Pinned in `HarmoniumPlugin::init()` (replaces FluidSynth library defaults,
+which drift across versions):
+
+- `synth.gain` = 0.4 (`fluid_synth_set_gain`)
+- Reverb ON, "small room": roomsize 0.2, damp 0.0, width 0.3, level 0.4
+  (FluidSynth 2.4 group API, `fx_group=-1` = all groups)
+- Chorus OFF (reeds have no chorus; shimmer comes from in-sample beating)
+- 4th-order interpolation on all channels
+- SoundFont ID from `fluid_synth_sfload` stored as `soundfont_id_` (needed
+  for future preset/stop selection)
+
+Live config keys (via `set_config`/`get_config`, no CLI surface yet):
+
+| Key | Values | Effect |
+|---|---|---|
+| `gain` | float 0–10 | `fluid_synth_set_gain`, strict validation |
+| `reverb` | on/off | `fluid_synth_reverb_on` all groups |
+| `chorus` | on/off | `fluid_synth_chorus_on` all groups |
+
+Plus the pre-existing keys: `soundfont_path`, `audio_driver`.
+
+Verified: 43/43 config-seam checks pass (`tests/scripts/run_config_tests.sh`);
+live capture peak level matches the offline render exactly (−25.7 dBFS for
+note 60 @ vel 100).
+
+## Harmonium realism test harness (Phase 0, 2026-09-18)
+
+`tests/` (see `tests/README.md` for full details):
+
+- 7 test MIDI tracks (T1–T7): envelope, legato, chords, staccato, drone,
+  repertoire phrase, velocity sweep — channel 0, no CCs/program changes
+- `render_sf2.sh` — offline FluidSynth render (baseline/phase-voicing modes)
+- `capture_live.sh` — live capture through CLI → plugin → audio. On this
+  machine the PipeWire path works: the plugin's ALSA output is proxied by
+  `pipewire-alsa`, the stream is captured with `parecord --monitor-stream`
+- `analyze.py` — onset/release times, sustained-note AM rate, peak/RMS
+- SF2 audit findings in `docs/HARMONIUM_SF2_AUDIT.md` — headline: top
+  octave (keys 65–84) is ONE sample stretched up to +19 semitones; attack
+  ≈1 ms, release 100 ms, no modulators, no LFO, ~3 Hz beating recorded into
+  loops
+
 ## Harmless warnings (do not chase these)
 
 - FluidSynth SDL3-related startup messages
 - GLib `g_param_spec` CRITICALs emitted by FluidSynth
 - `No preset found on channel 9` (GM percussion channel, unused)
 - `Failed to set thread to high priority`
+
+## Stuck notes / continuous drone (escape hatch)
+
+Harmonium samples sustain indefinitely (organ-type reeds, no natural decay),
+so **any NoteOn without a matching NoteOff drones forever** — unlike piano
+SoundFonts, stuck notes never self-heal. Causes seen so far: lost NoteOff over
+USB, notes left held when a test/automation script kills the CLI, or a stale
+background CLI process still holding notes (check with
+`ps aux | grep naadcore-cli`, kill with `pkill -f naadcore-cli`).
+
+To clear a stuck note in a live instance:
+- press the droning key once more (NoteOn + NoteOff), or
+- send All Notes Off — the plugin also resets its bellows state on it:
+  `aseqsend -p <naadcore port> "B0 7B 00"` (read the port from `aconnect -l`;
+  client numbers are dynamic), or
+- restart the CLI.
 
 ## Known minor issues
 
@@ -208,24 +318,37 @@ compile time:
 - `MidiEvent::timestamp` is never filled in by the CLI conversion layer (stays 0).
 - The `Synthesizer` class inside `core/midi.cpp` is currently unused by the plugin
   (plugins embed their own FluidSynth instance); it remains as core-library API.
-- No CC/passport handling beyond what FluidSynth does natively; no raga/bellows/
-  coupler/GUI features yet.
+- No CC/passport handling beyond what FluidSynth does natively; no raga,
+  coupler, or GUI features yet. (Uniform bellows velocity IS implemented —
+  see "Uniform Bellows Velocity" above; bellows pressure/expression modeling
+  such as CC#11 is still future work.)
 
 ## Suggested next steps
 
-1. **Housekeeping**: make the initial git commit of the cleaned-up tree (the repo
-   currently has zero commits — everything is untracked).
-2. **Multiple plugin support in CLI**: accept several `--plugin` flags or a plugin
-   directory; route MIDI to all loaded plugins (PluginManager already fans out).
-3. **Plugin configuration**: wire `set_config/get_config` to CLI flags or a config
-   file (e.g. per-plugin channel assignment).
-4. **Raga selection**: implement raga note filtering in the harmonium plugin
+1. **Harmonium realism Phases 2+** (active effort — Phases 0–1 complete):
+   - Phase 2: SF2 envelope surgery — release tail (~80–250 ms), attack,
+     high-register stretch mitigation (keys 65–84 are one stretched sample)
+   - Phase 3: 2-reed detuned layering via SF2 presets + `stop` config key
+   - Phase 4: octave coupler / sub-octave layer router; duplicate-NoteOn
+     ignore; CC 123 across all 16 channels
+   - Phase 5: drone (unpika) + config-key registry doc
+   - Reference clips still pending (yt-dlp/sox not installable non-interactively)
+2. **Wire `--audio-driver` through** — the CLI flag is parsed but never passed
+   to `PluginManager::initialize()`; the plugin always uses its internal
+   default (requires a `main.cpp` change — deliberately out of scope of the
+   realism work).
+3. **Multiple plugin support in CLI**: accept several `--plugin` flags or a
+   plugin directory; route MIDI to all loaded plugins (PluginManager already
+   fans out).
+4. **Plugin configuration surface**: wire `set_config/get_config` to CLI
+   flags, a config file, or MIDI CC mappings (the realism plan recommends
+   in-plugin CC mappings to avoid CLI changes).
+5. **Raga selection**: implement raga note filtering in the harmonium plugin
    (see docs/CODEBASE_ANALYSIS.md for the harmonium-companion raga/sargam logic
    worth porting).
-5. **Bellows/expression modeling**: map a MIDI controller (CC#11 or velocity
-   envelope) to harmonium air-pressure expression.
-6. **Tests**: add a unit/integration test target (tests/ was removed as empty);
-   e.g. plugin export checks, PluginManager load/unload tests, ALSA loopback tests.
+6. **Bellows/expression modeling**: map a MIDI controller (CC#11 or velocity
+   envelope) to harmonium air-pressure expression (deliberately deferred —
+   air is assumed 100% for the current realism phases).
 7. **Additional plugins**: pipe organ or drone/tanpura plugin using the same
    INaadPlugin contract as a portability proof.
 8. **Packaging**: install rules exist (`bin`, `lib/naadcore`, `lib/naadcore/plugins`);

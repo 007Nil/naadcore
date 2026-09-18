@@ -1,6 +1,6 @@
 # NaadCore Implementation Summary
 
-Last updated: 2026-09-17 (post-cleanup state)
+Last updated: 2026-09-17 (uniform bellows velocity added to harmonium plugin)
 
 ## Overview
 
@@ -19,6 +19,10 @@ Q49 → ALSA sequencer → naadcore-cli → PluginManager → harmonium plugin
 
 - ✅ **Plugin system complete and validated** — CLI loads the plugin, audio starts,
   MIDI events route to the synth, notes play.
+- ✅ **Uniform bellows velocity implemented** — chords sound at the first key's
+  velocity; when the reference key is released mid-chord, the reference passes
+  to the oldest still-held key's original press velocity (plugin-local, in
+  `HarmoniumPlugin::handle_midi_event`; see `HANDOVER.md`).
 - ✅ **MVP app removed** — the original `naadcore-harmonium` executable and its
   sources (`apps/harmonium.cpp`, `core/harmonium.hpp`,
   `include/naadcore/harmonium.hpp`) were deleted; the plugin workflow fully
@@ -43,7 +47,8 @@ Q49 → ALSA sequencer → naadcore-cli → PluginManager → harmonium plugin
   client registered as `naadcore`, non-blocking event drain, callback dispatch.
 - **Harmonium plugin** (`plugins/harmonium/`): embedded FluidSynth, compile-time
   SoundFont path, full MIDI event handling (Note On/Off, CC, Pitch Bend,
-  Program Change, Channel/Key Pressure).
+  Program Change, Channel/Key Pressure), and uniform bellows velocity
+  (held-note tracking with per-key original velocities; CC 123 resets).
 - **CLI** (`apps/naadcore-cli/`): `--plugin <path>` (required), `--midi <client:port>`,
   `--audio-driver <name>`, `--help`.
 
@@ -79,7 +84,11 @@ The implementation was verified through:
    driver start, single "MIDI input connected: 20:0 -> ..." line, readiness message.
 3. MIDI end-to-end: `aseqsend -p <port> "90 60 100"` / `"80 60 0"` against the
    running CLI; process stays alive, no errors in log.
-4. Real-world key-press testing on the Q49 (velocity sensitivity + polyphony).
+4. Uniform bellows velocity: instrumented `aseqsend` matrix covering chord
+   inheritance, baton-pass on reference-key release, fresh sequences after
+   full release, vel-0 NoteOn, duplicate NoteOn, phantom NoteOff, and CC 123
+   reset — all pass.
+5. Real-world key-press testing on the Q49 (velocity sensitivity + polyphony).
 
 ## Project structure
 

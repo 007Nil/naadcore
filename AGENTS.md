@@ -87,11 +87,17 @@ Use this agent for thorough code reviews. It ensures code quality, correctness, 
 
 ## Best Practices
 
-1. **Be Specific**: Include detailed problem descriptions for better agent responses
-2. **Reference Context**: Mention relevant files, error messages, or recent changes
-3. **Use Proper Formatting**: Use code blocks for file names and command examples
-4. **Follow Up**: Respond to agent suggestions and ask clarifying questions
-5. **Document Decisions**: Record important decisions made during agent interactions
+1. **Always update the docs**: every implementation session MUST update the
+   documentation to match the code before finishing — at minimum `HANDOVER.md`
+   (authoritative current state: "Last updated" line, affected sections,
+   file map, next steps) and any doc whose content the change invalidates
+   (`README.md`, `docs/README.md`, `docs/HARMONIUM_SF2_AUDIT.md`,
+   `tests/README.md`, `tests/RESULTS.md`, etc.). Documentation drift is a bug.
+2. **Be Specific**: Include detailed problem descriptions for better agent responses
+3. **Reference Context**: Mention relevant files, error messages, or recent changes
+4. **Use Proper Formatting**: Use code blocks for file names and command examples
+5. **Follow Up**: Respond to agent suggestions and ask clarifying questions
+6. **Document Decisions**: Record important decisions made during agent interactions
 
 ## Agent Interaction Tips
 

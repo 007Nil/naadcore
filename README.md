@@ -118,8 +118,11 @@ client 129: 'naadcore' [type=user,pid=...]
 
 (If the subscription is missing, connect manually: `aconnect 20:0 129:0`.)
 
-Play the Q49: soft keys → quiet sound, hard keys → loud sound (velocity works),
-chords → polyphony works, release → sound stops.
+Play the Q49: single soft keys → quiet sound, single hard keys → loud sound,
+chords → uniform bellows velocity (every key in the chord sounds at the first
+key's velocity; when that key is released, the reference passes to the oldest
+still-held key's original press velocity — see `HANDOVER.md`), release → sound
+stops.
 
 ## Harmless warnings (safe to ignore)
 
@@ -131,11 +134,15 @@ chords → polyphony works, release → sound stops.
 ## Troubleshooting
 
 1. Kill stale instances: `pkill -f naadcore-cli`
-2. Try another audio driver: `--audio-driver pipewire` (or `pulseaudio`)
-3. Check the subscription: `aconnect -l` must show `Connected From: 20:0` on the
+2. **Continuous drone / stuck note**: harmonium samples sustain forever (no
+   natural decay), so a lost NoteOff plays endlessly. Fix: press the droning
+   key once more, or send All Notes Off (also resets the bellows state):
+   `aseqsend -p 129:0 "B0 7B 00"` (use the actual port from `aconnect -l`)
+3. Try another audio driver: `--audio-driver pipewire` (or `pulseaudio`)
+4. Check the subscription: `aconnect -l` must show `Connected From: 20:0` on the
    `naadcore input` port
-4. Verify the Q49 is sending: `aseqdump -p 20:0` while pressing keys
-5. Send a note by hand (this system's `aseqsend` uses positional hex syntax):
+5. Verify the Q49 is sending: `aseqdump -p 20:0` while pressing keys
+6. Send a note by hand (this system's `aseqsend` uses positional hex syntax):
    `aseqsend -p 129:0 "90 60 100"` (note on) and `aseqsend -p 129:0 "80 60 0"` (note off)
 
 ## Project structure
@@ -157,6 +164,9 @@ naadcore/
 │   ├── CMakeLists.txt              # Embeds HARMONIUM_SOUNDFONT_PATH
 │   ├── harmonium_plugin.hpp
 │   └── harmonium_plugin.cpp        # Embedded FluidSynth synth, exports C factory functions
+├── tests/                          # Realism test harness (T1–T7 tracks, render/capture
+│   │                               #   scripts, analyze.py, config-seam tests)
+│   └── README.md
 └── docs/                           # Architecture and plugin-system documentation
 ```
 
@@ -167,7 +177,9 @@ naadcore/
 - `docs/PLUGIN_SYSTEM.md` — plugin system overview
 - `docs/PLUGIN_DEVELOPMENT.md` — how to write a new plugin
 - `docs/PLUGIN_SYSTEM_IMPLEMENTATION.md` — plugin system implementation notes
+- `docs/HARMONIUM_SF2_AUDIT.md` — harmonium.sf2 structure audit
 - `docs/NAADCORE_MVP_CHALLENGE.md` — historical MVP record (completed)
+- `tests/README.md` — realism test harness (test tracks, renders, A/B workflow)
 
 ## License
 

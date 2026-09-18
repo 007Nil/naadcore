@@ -150,7 +150,7 @@ int NaadCoreCLI::run() {
         
         // Set up MIDI callback to route events to plugin
         midi_input.set_callback([this, &pm](const snd_seq_event_t& ev) {
-            MidiEvent event;
+            MidiEvent event{};
             
             // Convert ALSA event to plugin event
             switch (ev.type) {

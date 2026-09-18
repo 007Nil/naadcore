@@ -1,1 +1,4 @@
 build/*
+session.info
+tests/renders/
+tests/references/
