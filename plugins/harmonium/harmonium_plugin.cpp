@@ -119,6 +119,18 @@ PluginResult HarmoniumPlugin::init(const char* audio_driver) {
     apply_stop();
     std::cout << "Synth stop: " << stop_ << std::endl;
 
+    // Layer router (Phase 4): internal channels 14/15 carry the sub-octave
+    // and octave-coupler layers on the same stop preset. Set their gains,
+    // and give the coupler channel its optional +3 cents detune (subtle
+    // beat against the main voice).
+    apply_layer_gains();
+    apply_coupler_detune();
+    std::cout << "Synth layers: coupler=" << (coupler_on_ ? "on" : "off")
+              << " sub_octave=" << (sub_octave_on_ ? "on" : "off")
+              << " (ch" << kCouplerChannel << "=note+12 CC7=" << kCouplerCC7
+              << ", ch" << kSubOctaveChannel << "=note-12 CC7="
+              << kSubOctaveCC7 << ")" << std::endl;
+
     return PLUGIN_OK;
 }
 
@@ -187,6 +199,33 @@ void HarmoniumPlugin::apply_stop() {
     }
 }
 
+void HarmoniumPlugin::apply_layer_gains() {
+    if (!synth_) {
+        return;
+    }
+    // The internal channels carry their layer at a fixed gain below the
+    // main voice; CC 7 events are never mirrored to them (see
+    // handle_midi_event), so these values stay the layer gain knob.
+    fluid_synth_cc(synth_, kCouplerChannel, 7, kCouplerCC7);
+    fluid_synth_cc(synth_, kSubOctaveChannel, 7, kSubOctaveCC7);
+}
+
+void HarmoniumPlugin::apply_coupler_detune() {
+    if (!synth_) {
+        return;
+    }
+    // Optional subtle beat between the main voice and its octave coupler:
+    // raise the coupler channel +3 cents via the MIDI Tuning Standard API.
+    // Tunings live outside the SoundFont/preset namespace and survive
+    // program_select, so this is applied once at init. Failure is silent —
+    // the double-stop zones already provide shimmer (this is a bonus).
+    std::vector<double> pitch(128, kCouplerDetuneCents);
+    if (fluid_synth_activate_key_tuning(synth_, 0, 0, "coupler+3c",
+                                        pitch.data(), 0) == 0) {
+        fluid_synth_activate_tuning(synth_, kCouplerChannel, 0, 0, 0);
+    }
+}
+
 PluginResult HarmoniumPlugin::start_audio() {
     if (!synth_) {
         std::cerr << "Synth not initialized" << std::endl;
@@ -221,15 +260,64 @@ std::vector<HarmoniumPlugin::HeldNote>::iterator HarmoniumPlugin::find_held(uint
                         [note](const HeldNote& held) { return held.note == note; });
 }
 
-void HarmoniumPlugin::release_held_note(uint8_t note) {
+bool HarmoniumPlugin::release_held_note(uint8_t note) {
     auto it = find_held(note);
-    if (it != held_notes_.end()) {
-        held_notes_.erase(it);
+    if (it == held_notes_.end()) {
+        return false;
     }
+
+    // Release ALL voices started for this note: the layer voices on the
+    // fixed internal channels and the main voice on the channel the note
+    // originally arrived on (a cross-channel NoteOff must not strand a
+    // voice — one harmonium, one bellows; the stored channel is only a
+    // FluidSynth-routing detail).
+    if (it->layers & kLayerCoupler) {
+        fluid_synth_noteoff(synth_, kCouplerChannel, it->note + 12);
+    }
+    if (it->layers & kLayerSubOctave) {
+        fluid_synth_noteoff(synth_, kSubOctaveChannel, it->note - 12);
+    }
+    fluid_synth_noteoff(synth_, it->channel, it->note);
+
+    held_notes_.erase(it);
     if (held_notes_.empty()) {
         reference_velocity_ = 0;
     } else {
         reference_velocity_ = held_notes_.front().velocity;
+    }
+    return true;
+}
+
+void HarmoniumPlugin::set_note_layer(HeldNote& held, uint8_t layer_bit, bool on) {
+    const bool coupler = (layer_bit == kLayerCoupler);
+    const int channel = coupler ? kCouplerChannel : kSubOctaveChannel;
+    const int layer_note = coupler ? held.note + 12 : held.note - 12;
+
+    // Range clamps: a coupler voice above MIDI note 127 or a sub-octave
+    // voice below 0 cannot exist — silently skip (no logging).
+    if (layer_note < 0 || layer_note > 127) {
+        return;
+    }
+    if (on) {
+        if (fluid_synth_noteon(synth_, channel,
+                               static_cast<uint8_t>(layer_note),
+                               held.sounding_velocity) == 0) {
+            held.layers |= layer_bit;
+        }
+        // A failed noteon (e.g. key outside the font's zones) simply
+        // leaves the bit unset — the release path then stays a no-op.
+    } else {
+        if (held.layers & layer_bit) {
+            fluid_synth_noteoff(synth_, channel,
+                                static_cast<uint8_t>(layer_note));
+        }
+        held.layers &= static_cast<uint8_t>(~layer_bit);
+    }
+}
+
+void HarmoniumPlugin::set_layer_for_all_held(uint8_t layer_bit, bool on) {
+    for (HeldNote& held : held_notes_) {
+        set_note_layer(held, layer_bit, on);
     }
 }
 
@@ -241,6 +329,15 @@ PluginResult HarmoniumPlugin::handle_midi_event(const MidiEvent& event) {
     switch (event.type) {
         case MidiEvent::NOTE_ON: {
             if (event.data2 > 0) {
+                // Duplicate NoteOn for an already-held key: IGNORED. The
+                // pallet is already open and sounding; re-triggering would
+                // re-attack the reed mid-phrase (audible Phase <=3 bug,
+                // fixed in Phase 4). Nothing is updated and no FluidSynth
+                // call is made.
+                if (find_held(event.data1) != held_notes_.end()) {
+                    break;
+                }
+
                 // Uniform bellows velocity: the first key of a sequence
                 // latches the reference; every key pressed while the
                 // bellows is open (notes held) sounds at it. Releasing
@@ -249,46 +346,85 @@ PluginResult HarmoniumPlugin::handle_midi_event(const MidiEvent& event) {
                 if (held_notes_.empty()) {
                     reference_velocity_ = event.data2;
                 }
-                uint8_t effective_velocity = reference_velocity_;
-
-                if (find_held(event.data1) == held_notes_.end()) {
-                    held_notes_.push_back({event.data1, event.data2});
-                }
+                const uint8_t sounding_velocity = reference_velocity_;
 
                 // Note on with velocity
-                int result = fluid_synth_noteon(synth_, event.channel, event.data1, effective_velocity);
+                int result = fluid_synth_noteon(synth_, event.channel, event.data1, sounding_velocity);
                 if (result != 0) {
                     std::cerr << "Note on failed: ch=" << (int)event.channel
                               << " note=" << (int)event.data1 << std::endl;
                     return PLUGIN_ERROR;
                 }
+
+                // Layer router (Phase 4): start the octave-coupler and
+                // sub-octave voices for this note, all at the bellows
+                // reference velocity (one bellows — layers never fork it).
+                HeldNote held{event.data1, event.data2, event.channel,
+                              sounding_velocity, 0};
+                if (coupler_on_) {
+                    set_note_layer(held, kLayerCoupler, true);
+                }
+                if (sub_octave_on_) {
+                    set_note_layer(held, kLayerSubOctave, true);
+                }
+                held_notes_.push_back(held);
             } else {
                 // Note on with 0 velocity is note off
-                release_held_note(event.data1);
-                fluid_synth_noteoff(synth_, event.channel, event.data1);
+                if (!release_held_note(event.data1)) {
+                    // Not held here: pass the release through unchanged.
+                    fluid_synth_noteoff(synth_, event.channel, event.data1);
+                }
             }
             break;
         }
 
         case MidiEvent::NOTE_OFF: {
-            release_held_note(event.data1);
-            fluid_synth_noteoff(synth_, event.channel, event.data1);
+            if (!release_held_note(event.data1)) {
+                // Not held here: pass the release through unchanged.
+                fluid_synth_noteoff(synth_, event.channel, event.data1);
+            }
             break;
         }
-        
+
         case MidiEvent::CONTROL_CHANGE: {
             // All Notes Off: reset bellows state (stuck-note insurance)
+            // and silence ALL 16 channels — CC 123 sent to one channel
+            // only clears that channel's voices, and layer voices live on
+            // internal channels the sender knows nothing about.
             if (event.data1 == 123) {
                 held_notes_.clear();
                 reference_velocity_ = 0;
+                const int midi_channels = fluid_synth_count_midi_channels(synth_);
+                for (int ch = 0; ch < midi_channels; ++ch) {
+                    fluid_synth_all_notes_off(synth_, ch);
+                }
             }
             fluid_synth_cc(synth_, event.channel, event.data1, event.data2);
+            // Mirror expression (CC 11) to active layers so they track the
+            // main voice. CC 7 (volume) is deliberately NOT mirrored: on
+            // the internal channels it IS their fixed gain knob
+            // (kCouplerCC7 / kSubOctaveCC7). Pitch bend is mirrored in its
+            // own case below.
+            if (event.data1 == 11) {
+                if (coupler_on_) {
+                    fluid_synth_cc(synth_, kCouplerChannel, 11, event.data2);
+                }
+                if (sub_octave_on_) {
+                    fluid_synth_cc(synth_, kSubOctaveChannel, 11, event.data2);
+                }
+            }
             break;
         }
-        
+
         case MidiEvent::PITCH_BEND: {
             int value = event.data1 | (event.data2 << 7);
             fluid_synth_pitch_bend(synth_, event.channel, value);
+            if (coupler_on_) {
+                fluid_synth_pitch_bend(synth_, kCouplerChannel, value);
+            }
+            if (sub_octave_on_) {
+                fluid_synth_pitch_bend(synth_, kSubOctaveChannel, value);
+            }
             break;
         }
         
@@ -352,6 +488,12 @@ std::string HarmoniumPlugin::get_config(const char* key) {
     }
     if (k == "stop") {
         return stop_;
+    }
+    if (k == "coupler") {
+        return coupler_on_ ? "on" : "off";
+    }
+    if (k == "sub_octave") {
+        return sub_octave_on_ ? "on" : "off";
     }
 
     return "";
@@ -447,9 +589,40 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
         }
         stop_ = v;
         // Apply immediately when the synth + font are ready; otherwise
-        // init() applies the stored stop right after sfload.
+        // init() applies the stored stop right after sfload. The layer
+        // channels 14/15 are re-programmed by apply_stop() itself (it
+        // loops all channels); re-assert their gains in case anything
+        // reset them along with the preset.
         if (synth_ && soundfont_id_ >= 0) {
             apply_stop();
+            apply_layer_gains();
+        }
+        return PLUGIN_OK;
+    }
+
+    // Layer router (Phase 4): octave coupler + sub-octave toggles. Like
+    // the other on/off keys, values are strictly validated. Toggling while
+    // notes are held starts/releases that layer for every held note at
+    // its stored sounding_velocity (mid-phrase coupler change, like the
+    // predecessor's refreshAudio); the bellows reference is untouched.
+    if (k == "coupler" || k == "sub_octave") {
+        const std::string v = value;
+        bool on = false;
+        if (v == "on") {
+            on = true;
+        } else if (v == "off") {
+            on = false;
+        } else {
+            return PLUGIN_INVALID_PARAM;
+        }
+        const bool is_coupler = (k == "coupler");
+        bool& flag = is_coupler ? coupler_on_ : sub_octave_on_;
+        const bool changed = (flag != on);
+        flag = on;
+        if (synth_ && changed) {
+            set_layer_for_all_held(is_coupler ? kLayerCoupler
+                                              : kLayerSubOctave,
+                                   on);
         }
         return PLUGIN_OK;
     }

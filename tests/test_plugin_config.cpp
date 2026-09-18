@@ -66,6 +66,8 @@ int main(int argc, char** argv) {
     check_eq("default attack_ms", p->get_config("attack_ms"), "10");
     check_eq("default release_ms", p->get_config("release_ms"), "200");
     check_eq("default stop", p->get_config("stop"), "single");
+    check_eq("default coupler", p->get_config("coupler"), "off");
+    check_eq("default sub_octave", p->get_config("sub_octave"), "off");
 
     // init (no audio driver started)
     check_result("init", p->init(nullptr), naadcore::PLUGIN_OK);
@@ -208,6 +210,48 @@ int main(int argc, char** argv) {
                  naadcore::PLUGIN_INVALID_PARAM);
     check_eq("stop unchanged after rejects", p->get_config("stop"), "single");
 
+    // layer router (Phase 4: coupler / sub_octave toggles, on/off strict)
+    check_eq("coupler after init", p->get_config("coupler"), "off");
+    check_eq("sub_octave after init", p->get_config("sub_octave"), "off");
+    check_result("coupler on", p->set_config("coupler", "on"),
+                 naadcore::PLUGIN_OK);
+    check_eq("coupler reads on", p->get_config("coupler"), "on");
+    check_result("sub_octave on", p->set_config("sub_octave", "on"),
+                 naadcore::PLUGIN_OK);
+    check_eq("sub_octave reads on", p->get_config("sub_octave"), "on");
+    check_result("coupler off", p->set_config("coupler", "off"),
+                 naadcore::PLUGIN_OK);
+    check_eq("coupler reads off", p->get_config("coupler"), "off");
+    check_result("sub_octave off", p->set_config("sub_octave", "off"),
+                 naadcore::PLUGIN_OK);
+    check_eq("sub_octave reads off", p->get_config("sub_octave"), "off");
+    check_result("coupler bad value", p->set_config("coupler", "banana"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("coupler case-sensitive rejected",
+                 p->set_config("coupler", "On"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("coupler trailing space rejected",
+                 p->set_config("coupler", "on "),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("coupler empty rejected", p->set_config("coupler", ""),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("sub_octave bad value",
+                 p->set_config("sub_octave", "1"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("sub_octave case-sensitive rejected",
+                 p->set_config("sub_octave", "OFF"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("sub_octave trailing space rejected",
+                 p->set_config("sub_octave", "off "),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("sub_octave empty rejected",
+                 p->set_config("sub_octave", ""),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_eq("coupler unchanged after rejects", p->get_config("coupler"),
+             "off");
+    check_eq("sub_octave unchanged after rejects",
+             p->get_config("sub_octave"), "off");
+
     // unknown keys and null handling
     check_eq("unknown get is empty", p->get_config("bogus"), "");
     check_result("unknown set", p->set_config("bogus", "x"),
@@ -244,6 +288,100 @@ int main(int argc, char** argv) {
     check_result("note off after program change", p->handle_midi_event(ev),
                  naadcore::PLUGIN_OK);
 
+    // ---- Phase 4 behavior, state-level (headless: only PLUGIN_OK and
+    // config readback are observable here; audible verification is done
+    // with plugin-in-loop renders — see tests/RESULTS.md Phase 4) ----
+
+    // Mid-phrase layer toggles: set_config BETWEEN note events must not
+    // disturb anything and the note-off still releases cleanly (the
+    // layer voices started/released for the held note internally).
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.channel = 0;
+    ev.data1 = 60;
+    ev.data2 = 100;
+    check_result("toggle: note on", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    check_result("toggle: coupler on mid-phrase",
+                 p->set_config("coupler", "on"), naadcore::PLUGIN_OK);
+    check_result("toggle: sub_octave on mid-phrase",
+                 p->set_config("sub_octave", "on"), naadcore::PLUGIN_OK);
+    check_result("toggle: coupler off mid-phrase",
+                 p->set_config("coupler", "off"), naadcore::PLUGIN_OK);
+    check_result("toggle: sub_octave off mid-phrase",
+                 p->set_config("sub_octave", "off"), naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("toggle: note off", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+
+    // Duplicate NoteOn while held: swallowed without error (no
+    // re-trigger); a single off then releases the still-single voice.
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.data1 = 64;
+    ev.data2 = 100;
+    check_result("duplicate: note on", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.data2 = 40;
+    check_result("duplicate: re-on while held ignored",
+                 p->handle_midi_event(ev), naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("duplicate: note off", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.data1 = 67;
+    ev.data2 = 90;
+    check_result("duplicate: fresh note after dup sequence",
+                 p->handle_midi_event(ev), naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("duplicate: fresh note off", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+
+    // Cross-channel NoteOff: a held note must release no matter which
+    // channel the off arrives on (bellows state is channel-agnostic).
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.channel = 0;
+    ev.data1 = 60;
+    ev.data2 = 100;
+    check_result("cross-ch: note on ch0", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.channel = 3;
+    ev.data1 = 64;
+    ev.data2 = 80;
+    check_result("cross-ch: note on ch3", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    ev.channel = 7;   // wrong channel for note 60 (started on ch0)
+    ev.data1 = 60;
+    check_result("cross-ch: note 60 off on ch7", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.channel = 1;   // wrong channel for note 64 (started on ch3)
+    ev.data1 = 64;
+    check_result("cross-ch: note 64 off on ch1", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+
+    // CC 123 (All Notes Off): clears held state across all channels;
+    // subsequent events must behave as after a full release.
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.channel = 5;
+    ev.data1 = 72;
+    ev.data2 = 100;
+    check_result("cc123: note on ch5", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::CONTROL_CHANGE;
+    ev.channel = 0;
+    ev.data1 = 123;
+    ev.data2 = 0;
+    check_result("cc123: all notes off", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.channel = 0;
+    ev.data1 = 72;
+    ev.data2 = 50;    // duplicate after CC123 must not error either way
+    check_result("cc123: note on after cc123", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("cc123: note off after cc123", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+
     p->stop_audio();
     destroy(p);
 
@@ -260,6 +398,13 @@ int main(int argc, char** argv) {
     check_result("pre-init stop double", q->set_config("stop", "double"),
                  naadcore::PLUGIN_OK);
     check_eq("pre-init stop stored", q->get_config("stop"), "double");
+    check_result("pre-init coupler on", q->set_config("coupler", "on"),
+                 naadcore::PLUGIN_OK);
+    check_result("pre-init sub_octave on",
+                 q->set_config("sub_octave", "on"), naadcore::PLUGIN_OK);
+    check_eq("pre-init coupler stored", q->get_config("coupler"), "on");
+    check_eq("pre-init sub_octave stored", q->get_config("sub_octave"),
+             "on");
     check_result("q init", q->init(nullptr), naadcore::PLUGIN_OK);
     check_eq("pre-init gain applied", q->get_config("gain"), "2.500");
     check_eq("pre-init reverb applied", q->get_config("reverb"), "off");
@@ -267,6 +412,31 @@ int main(int argc, char** argv) {
     check_eq("pre-init release_ms applied", q->get_config("release_ms"),
              "300");
     check_eq("pre-init stop applied", q->get_config("stop"), "double");
+    check_eq("pre-init coupler applied", q->get_config("coupler"), "on");
+    check_eq("pre-init sub_octave applied", q->get_config("sub_octave"),
+             "on");
+    // layers enabled from init: a note must start main + both layers and
+    // release them all (headless: PLUGIN_OK + layer state readback)
+    naadcore::MidiEvent evq{};
+    evq.type = naadcore::MidiEvent::NOTE_ON;
+    evq.channel = 2;
+    evq.data1 = 60;
+    evq.data2 = 100;
+    check_result("layers: note on with both layers enabled",
+                 q->handle_midi_event(evq), naadcore::PLUGIN_OK);
+    evq.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("layers: note off releases all layers",
+                 q->handle_midi_event(evq), naadcore::PLUGIN_OK);
+    // a note whose octave coupler would exceed MIDI note 127 must not
+    // error (the coupler voice is silently skipped)
+    evq.type = naadcore::MidiEvent::NOTE_ON;
+    evq.data1 = 120;
+    evq.data2 = 100;
+    check_result("layers: coupler clamp note on", q->handle_midi_event(evq),
+                 naadcore::PLUGIN_OK);
+    evq.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("layers: coupler clamp note off",
+                 q->handle_midi_event(evq), naadcore::PLUGIN_OK);
     // live stop switch after init
     check_result("live stop single", q->set_config("stop", "single"),
                  naadcore::PLUGIN_OK);

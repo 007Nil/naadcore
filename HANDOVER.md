@@ -1,19 +1,24 @@
 # NaadCore Handover — Authoritative State Document
 
-Last updated: 2026-09-19 (harmonium realism Phase 3: reed stops — `stop`
-config key (single/double) selecting SoundFont presets in the new in-repo
-derived font plugins/harmonium/soundfonts/harmonium_v2.sf2 (+4¢ detuned
-2-reed layering = the signature slow beating); incoming PROGRAM_CHANGE
-events now IGNORED (stops are config-controlled); CMake default
-HARMONIUM_SOUNDFONT_PATH repointed at the in-repo font (override still
-available); PROGRAM_CHANGE ignore verified objectively; 96/96 config tests;
-see "Reed stops (Phase 3)" below. Phases 0–2 unchanged: synth voicing
-pinned in plugin — gain/reverb/chorus defaults + live config keys; runtime
-envelope shaping — attack_ms/release_ms live config keys via FluidSynth
-channel generators; plugin-in-loop offline renderer (now with KEY=VALUE
-config overrides); test harness under tests/; SF2 audited — see
-docs/HARMONIUM_SF2_AUDIT.md; `--audio-driver` CLI flag wired through;
-interactive launcher naadcore.sh added)
+Last updated: 2026-09-19 (harmonium realism Phase 4: internal layer router —
+octave coupler on internal channel 15 (note+12, ~6–8 dB below main, +3¢
+detuned) and sub-octave on channel 14 (note−12, ~11–14 dB below main),
+`coupler` / `sub_octave` live config keys with mid-phrase toggling while
+notes are held; pitch bend + CC 11 mirrored to layers, CC 7 deliberately
+NOT mirrored (it IS the layer gain); duplicate NoteOn on a held key now
+IGNORED (no re-attack — audible change from Phase ≤3); CC 123 hardened to
+all_notes_off on ALL 16 channels; cross-channel NoteOff releases voices on
+the note's original channel; 147/147 config tests; see "Layer router
+(Phase 4)" below. Phases 0–3 unchanged: synth voicing pinned in plugin —
+gain/reverb/chorus defaults + live config keys; runtime envelope shaping —
+attack_ms/release_ms live config keys via FluidSynth channel generators;
+reed stops — `stop` config key (single/double) selecting presets in the
+in-repo derived font plugins/harmonium/soundfonts/harmonium_v2.sf2,
+PROGRAM_CHANGE events ignored; uniform bellows velocity model (held_notes_
+vector, reference_velocity_ latch/baton-pass); plugin-in-loop offline
+renderer with KEY=VALUE config overrides; test harness under tests/;
+SF2 audited — see docs/HARMONIUM_SF2_AUDIT.md; `--audio-driver` CLI flag
+wired through; interactive launcher naadcore.sh added)
 
 ## Project purpose
 
@@ -87,13 +92,14 @@ naadcore/
 │   ├── README.md                   # Harness guide, tool status, capture paths
 │   ├── RESULTS.md                  # A/B score sheet + objective measurements
 │   ├── analyze.py                  # WAV analysis (onset/release/AM/peak/RMS)
-│   ├── test_plugin_config.cpp      # Config-seam unit tests (96 checks)
-│   ├── midi/                       # 7 base test tracks (T1–T7) + T8/T9
-│   │                               #   Phase 3 probe tracks
+│   ├── test_plugin_config.cpp      # Config-seam unit tests (147 checks)
+│   ├── midi/                       # 7 base test tracks (T1–T7) + T8–T11
+│   │                               #   Phase 3/4 probe tracks
 │   ├── scripts/                    # gen_midi.py, render_sf2.sh, capture_live.sh,
 │   │                               #   render_plugin.cpp, run_render_plugin.sh,
 │   │                               #   derive_sf2.py (Phase 3 SF2 surgery),
-│   │                               #   am_spectrum.py (AM-band spectrum), ...
+│   │                               #   am_spectrum.py (AM-band spectrum),
+│   │                               #   gen_probes_phase4.py (T10/T11 probes), ...
 │   ├── timings/                    # Note timing files used by analyze.py
 │   ├── renders/                    # Rendered/captured WAVs (gitignored)
 │   └── references/                 # Reference clips (gitignored, personal use)
@@ -272,17 +278,31 @@ Semantics:
 - **Legato inherits:** a melodic NoteOn while another key is held also plays
   at the reference velocity (physically faithful; dynamics flatten until all
   keys are released — accepted trade-off).
-- **No retroactive re-velocity:** already-sounding notes are never re-triggered.
+- **No retroactive re-velocity:** already-sounding notes are never re-triggered
+  or re-velocityed.
 - **Global bellows:** held-note state ignores the MIDI channel (one harmonium,
   one bellows); a NoteOn with velocity 0 still counts as a release, and a
-  duplicate NoteOn for an already-held key plays at the reference velocity
-  without changing its recorded original velocity or position.
-- **CC 123 (All Notes Off)** clears the sequence state in addition to the
-  normal FluidSynth passthrough (stuck-note insurance).
+  **duplicate NoteOn for an already-held key is IGNORED** (Phase 4 policy
+  change: the pallet is already open — re-triggering re-attacked the reed
+  mid-phrase; now nothing is updated and no FluidSynth call is made. This is
+  an audible change from Phase ≤3, where the duplicate re-noteoned at the
+  reference velocity).
+- **Cross-channel release (Phase 4):** a NoteOff for a held note releases its
+  voices on the note's ORIGINAL channel(s) no matter which channel the off
+  arrived on (the channel is stored per held note; bellows bookkeeping stays
+  channel-agnostic).
+- **CC 123 (All Notes Off)** clears the sequence state AND calls
+  `fluid_synth_all_notes_off` on ALL 16 channels (a one-channel CC 123 only
+  cleared that channel — layer voices on internal channels 14/15 would have
+  been stranded).
 
-State: `std::vector<HeldNote> held_notes_` (`{note, original velocity}`,
-front = oldest pressed) + `uint8_t reference_velocity_` in `HarmoniumPlugin`
-(see `harmonium_plugin.hpp`).
+State: `std::vector<HeldNote> held_notes_` (`{note, original press velocity,
+channel, sounding_velocity, layers}`, front = oldest pressed) +
+`uint8_t reference_velocity_` in `HarmoniumPlugin` (see
+`harmonium_plugin.hpp`). `sounding_velocity` = the velocity actually played
+(the reference at press time) — needed so mid-phrase layer toggles start
+the right voices; `layers` = bit flags of the internal-channel voices
+currently sounding for the note.
 
 ## Synth voicing (Phase 1, 2026-09-18)
 
@@ -307,6 +327,8 @@ Live config keys (via `set_config`/`get_config`, no CLI surface yet):
 | `attack_ms` | int 1–2000 | vol-env attack via `GEN_VOLENVATTACK` (Phase 2) |
 | `release_ms` | int 1–4000 | vol-env release via `GEN_VOLENVRELEASE` (Phase 2) |
 | `stop` | single/double | reed stop → SoundFont preset via `program_select` (Phase 3) |
+| `coupler` | on/off | octave coupler layer (Phase 4) |
+| `sub_octave` | on/off | sub-octave layer (Phase 4) |
 
 Plus the pre-existing keys: `soundfont_path`, `audio_driver`.
 
@@ -422,6 +444,73 @@ pair) was **not** implemented — the core is solid but the octave coupler
 e.g. `run_render_plugin.sh T1.mid out.wav 3 stop=double`. `render_sf2.sh`
 defaults to the in-repo derived font (`HARMONIUM_SOUNDFONT` env overrides).
 
+## Layer router — octave coupler + sub-octave (Phase 4, 2026-09-19)
+
+The plugin routes each held note to up to three FluidSynth voices: the main
+voice on the incoming channel, plus optional fixed internal layers, all on
+the current `stop` preset. Channels 14/15 are RESERVED for the router —
+MIDI input arriving on them from a controller will collide with layer
+voices (the Q49 sends on one channel only; document any multi-channel
+controller use).
+
+| Layer | Internal channel | Pitch | Gain (measured vs main voice) | Config key |
+|---|---|---|---|---|
+| main | incoming channel (0–13 used) | note | 0 dB | — |
+| octave coupler | **15** | note+12 | **−6.4…−7.8 dB** (CC7=60) | `coupler` (default off) |
+| sub-octave | **14** | note−12 | **−11.4…−13.9 dB** (CC7=40; −22 dB measured at note 79 — its sub sample sits lower) | `sub_octave` (default off) |
+
+- **All layer voices sound at `reference_velocity_`** (the bellows reference
+  at press time) — the uniform bellows velocity model is untouched: one
+  bellows, layers never fork it, no retroactive re-velocity.
+- **Range clamps:** note+12 > 127 (coupler) or note−12 < 0 (sub) → that
+  layer's voice is silently skipped for the note. The font's lowest zone
+  covers keys 0–43 (G2 stretched), so sub-octave voices exist down to
+  note 0 (heavily stretched below ~36 — thin but present).
+- **HeldNote** carries `{note, velocity, channel, sounding_velocity,
+  layers}`: `channel` = incoming channel (all main-voice noteoffs use it, so
+  a cross-channel NoteOff cannot strand a voice); `sounding_velocity` = the
+  velocity actually played (needed for mid-phrase layer toggles); `layers` =
+  bits of the layer voices currently sounding for this note.
+- **Mid-phrase toggles** (`coupler=on|off`, `sub_octave=on|off` while notes
+  are held): toggling ON starts the layer for every currently held note at
+  its stored `sounding_velocity`; toggling OFF releases that layer's voices
+  immediately (mirrors the predecessor's refreshAudio semantics). The
+  bellows reference is untouched.
+- **Internal channel setup:** at `init()` (post-sfload) and after every
+  `stop` change, channels 14/15 get the current preset (apply_stop loops
+  ALL channels) and their layer-gain CC 7 (`apply_layer_gains()`). The
+  Phase 2 envelope generators already cover all channels; verified by
+  render that `program_select` does NOT reset them (with release_ms=2000
+  the coupler tail tracks the main's full 2 s shaped release).
+- **Coupler detune (optional, implemented):** channel 15 carries a +3¢
+  tuning (`fluid_synth_activate_key_tuning` + `fluid_synth_activate_tuning`,
+  MIDI Tuning Standard API, applied once at init — tunings survive program
+  changes). Renders show the coupler's fundamental line at f0×2^(+3¢) (e.g.
+  555.0 Hz next to the main's 554.0 for note 60) — a subtle beat between
+  main and octave layer. The double-stop zones already provide shimmer;
+  this is a bonus.
+- **Mirroring policy:** incoming PITCH_BEND and CC 11 (expression) are
+  mirrored to ACTIVE layer channels so layers track the main voice. **CC 7
+  is deliberately NOT mirrored** — on channels 14/15 it IS their fixed gain
+  knob (`kCouplerCC7`/`kSubOctaveCC7`); mirroring it would destroy the layer
+  balance. All other CCs stay main-channel-only.
+- **Behavior fixes shipped with Phase 4** (see "Uniform Bellows Velocity"
+  for the state model): duplicate NoteOn on a held key ignored (no
+  re-attack — audible change from Phase ≤3); CC 123 hardened to
+  `fluid_synth_all_notes_off` on all 16 channels plus the state reset;
+  cross-channel NoteOff releases on the stored channel.
+- **Verification** (plugin-in-loop renders, objective numbers in
+  tests/RESULTS.md Phase 4): octave-up/down lines at exactly ±1 octave; T3
+  per-member release removes both the main and coupler voice (no residual);
+  T5 drone couplers present with melody bit-identical; T10 duplicate NoteOn
+  produces no transient and one release tail; T11 multi-channel CC 123 +
+  cross-channel NoteOff strand nothing. Live mid-phrase toggling is
+  verified at state level (config tests interleave set_config between
+  handle_midi_event calls) plus pre-run-config renders — the renderer has
+  no mid-run config mechanism (deliberately: no MIDI semantics invented).
+- Startup log line: `Synth layers: coupler=off sub_octave=off (ch15=note+12
+  CC7=60, ch14=note-12 CC7=40)`.
+
 ## Harmonium realism test harness (Phase 0, 2026-09-18)
 
 `tests/` (see `tests/README.md` for full details):
@@ -476,17 +565,17 @@ To clear a stuck note in a live instance:
 - `MidiEvent::timestamp` is never filled in by the CLI conversion layer (stays 0).
 - The `Synthesizer` class inside `core/midi.cpp` is currently unused by the plugin
   (plugins embed their own FluidSynth instance); it remains as core-library API.
-- No CC/passport handling beyond what FluidSynth does natively; no raga,
-  coupler, or GUI features yet. (Uniform bellows velocity IS implemented —
-  see "Uniform Bellows Velocity" above; bellows pressure/expression modeling
-  such as CC#11 is still future work.)
+- No CC/passport handling beyond what FluidSynth does natively; no raga
+  or GUI features yet. (Uniform bellows velocity IS implemented —
+  see "Uniform Bellows Velocity" above; octave coupler + sub-octave
+  layers ARE implemented — see "Layer router (Phase 4)"; bellows
+  pressure/expression modeling beyond CC#11 mirroring is still future work.)
+- **MIDI channels 14/15 are reserved** by the layer router; MIDI input
+  arriving on them from a controller would collide with layer voices.
 
 ## Suggested next steps
 
-1. **Harmonium realism Phases 4+** (active effort — Phases 0–3 complete):
-   - Phase 4: octave coupler / sub-octave layer router (supersedes the
-     unimplemented `four` stop's octave pair); duplicate-NoteOn ignore;
-     CC 123 across all 16 channels
+1. **Harmonium realism Phases 5+** (active effort — Phases 0–4 complete):
    - Phase 5: drone (unpika) + config-key registry doc
    - Phase 7 (envelope work can't fix this): high-register stretch — keys
      65–84 are one F4 sample stretched up to +19 semitones; needs new samples

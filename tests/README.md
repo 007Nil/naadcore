@@ -8,9 +8,9 @@ clips (tests/references/) are gitignored.
 
 ```
 tests/
-├── midi/                  # 7 base test tracks (T1–T7, format 0, ch 0,
-│                          #   120 BPM, no CCs, no program changes) +
-│                          #   T8/T9 Phase 3 probe tracks — tracked in git
+├── midi/                  # 7 base test tracks (T1–T7, format 0,
+│                          #   120 BPM, ch 0) + T8–T11 Phase 3/4 probes
+│                          #   (T10/T11 via gen_probes_phase4.py) — in git
 ├── scripts/
 │   ├── gen_midi.py        # regenerates tests/midi/ (pure stdlib, no mido)
 │   ├── render_sf2.sh      # offline FluidSynth render of a track
@@ -21,12 +21,15 @@ tests/
 │   │                      #   (double-reed detuned preset) from the original
 │   ├── am_spectrum.py     # Phase 3 AM-band spectrum: top AM components per
 │   │                      #   note segment (separates beat from in-sample AM)
+│   ├── gen_probes_phase4.py # Phase 4 probes: T10 (duplicate NoteOn),
+│   │                      #   T11 (multi-channel CC 123 + cross-ch off)
 │   ├── sf2_audit.py       # SF2 binary structure dump (Phase 1 audit)
 │   └── run_config_tests.sh# compiles+runs test_plugin_config.cpp (ad hoc,
 │                          #   not wired into the project CMake build)
 ├── analyze.py             # numpy WAV analysis (onset/release/AM/peak/RMS)
 ├── test_plugin_config.cpp # config-seam tests (gain/reverb/chorus +
-│                          #   attack_ms/release_ms + stop live keys, 96 checks)
+│                          #   attack_ms/release_ms + stop + coupler/
+│                          #   sub_octave live keys, 147 checks)
 ├── renders/               # rendered/captured WAVs (gitignored)
 ├── references/            # personal-use reference clips (gitignored)
 ├── RESULTS.md             # A/B score sheet + objective measurements
@@ -194,6 +197,39 @@ lists the strongest AM components per note segment in the 0.1–5 Hz band
 (RMS-envelope FFT) — use it to separate the detune beat from the in-sample
 ~3 Hz beating (RESULTS.md Phase 3 has the numbers).
 
+## Phase 4: layer router probes (2026-09-19)
+
+Regenerate the two Phase 4 probe tracks with
+`python3 tests/scripts/gen_probes_phase4.py` (same hand-rolled format-0
+writer as gen_midi.py; committed tracks are in tests/midi/):
+
+| Track | Purpose |
+|---|---|
+| T10_duplicate_noteon | duplicate NoteOns on held keys (60@100 then 60@40; 64@100 then 64@70) — with the Phase 4 fix there is NO onset transient at 2.5 s / 7.5 s and exactly ONE release tail per note (4.5 s / 9.5 s) |
+| T11_all_notes_off | notes held on channels 0/1/3, CC 123 sent on channel 0 ONLY at 3.0 s (old behavior strands ch1/ch3 voices as an infinite drone), then note 72 on ch2 at 5.0 s released by a NoteOff on ch5 at 7.0 s (cross-channel release; old behavior strands the ch2 voice) |
+
+Render + check (plugin-in-loop; renderer MIDI supports any channel, which
+is what makes T11 a real multi-channel proof):
+
+```bash
+tests/scripts/run_render_plugin.sh tests/midi/T10_duplicate_noteon.mid \
+    tests/renders/p4_T10.wav 2
+python3 tests/analyze.py tests/renders/p4_T10.wav   # onsets at 0.5/6.0 only
+```
+
+Layer probes (layers are config keys — pass them to the renderer):
+
+```bash
+tests/scripts/run_render_plugin.sh tests/midi/T3_chord_uniformity.mid \
+    tests/renders/p4_T3_coupler_on.wav 3 coupler=on
+tests/scripts/run_render_plugin.sh tests/midi/T1_single_note_envelope.mid \
+    tests/renders/p4_T1_sub_on.wav 3 sub_octave=on
+```
+
+Objective Phase 4 numbers and the measurement method (power-subtraction:
+layer power = P(on-render) − P(off-render) in matched mid-sustain windows)
+are in tests/RESULTS.md. WAV times include the renderer's 0.2 s lead-in.
+
 
 ## Reference-clip workflow
 
@@ -225,7 +261,9 @@ Score reference vs old vs new per track in `tests/RESULTS.md`.
 | T7_velocity_sweep | velocity → amplitude/timbre mapping |
 | T8_program_change_probe | (Phase 3) program-change ignore proof, single 4 s note 60 |
 | T9_beat_probe | (Phase 3) 6 s notes 43/60/79 for beat-rate measurement |
+| T10_duplicate_noteon | (Phase 4) duplicate NoteOn while held → no re-attack, one release tail |
+| T11_all_notes_off | (Phase 4) multi-channel CC 123 + cross-channel NoteOff → nothing stranded |
 
-T8/T9 are hand-generated probe tracks (small inline Python writers, same
-VLQ/format-0 technique as gen_midi.py) — they are committed, not produced by
-gen_midi.py.
+T8–T11 are hand-generated probe tracks (small inline Python writers, same
+VLQ/format-0 technique as gen_midi.py; T10/T11 via
+`scripts/gen_probes_phase4.py`) — they are committed.

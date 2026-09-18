@@ -270,6 +270,140 @@ the single-vs-double comparison here uses one consistent method.)
 
 Renders: `tests/renders/p3_*.wav` (gitignored).
 
+## Phase 4: layer router + behavior fixes (2026-09-19)
+
+Octave coupler (ch 15, note+12, CC7=60, +3¢ detuned) and sub-octave (ch 14,
+note−12, CC7=40) as live config keys `coupler` / `sub_octave`; duplicate
+NoteOn ignored; CC 123 on all 16 channels; cross-channel NoteOff. All
+renders below are **plugin-in-loop** (`run_render_plugin.sh`), font =
+`plugins/harmonium/soundfonts/harmonium_v2.sf2`, default voicing
+(attack 10 ms / release 200 ms, reverb on).
+
+**Method — power subtraction.** Layer voices are detuned (+3¢) and/or
+pitch-shifted a full octave from the main voice, so their partials beat
+against the main's and sum approximately incoherently over a sustained
+window: `P_layer = P(on-render) − P(off-render)` in matched mid-sustain
+windows (0.2 s renderer lead-in accounted for). The layer's level relative
+to the main voice is `10·log10(P_layer / P_main)`.
+
+### Layer gains (T1, single note, all voices at bellows velocity)
+
+| Note (vel) | Coupler excess | Sub-octave excess |
+|---|---|---|
+| 60 (100) | −7.59 dB | −11.43 dB |
+| 60 (40) | −7.70 dB | −11.44 dB |
+| 43 (100) | −7.81 dB | −13.92 dB |
+| 79 (100) | −6.35 dB | −22.25 dB |
+
+Coupler ≈ 6–8 dB below main ("clearly audible, clearly quieter" — the
+per-note coupler level relative to its own main voice is uniform within
+~1.5 dB; note 79's sub sits lower because its sub sample (67) differs).
+Note velocity does not affect the ratio (both voices share the bellows
+reference — uniformity preserved).
+
+### Octave placement (exact ±1 octave, spectral lines)
+
+- Coupler of note 60: fundamental appears at **555.0 Hz** (= f0(60) 277.0 ×
+  2^(3/1200) — the +3¢ coupler tuning is visible as a separate line beside
+  the main's 2nd harmonic at 554.0 Hz). Same for note 43 (207.0 Hz).
+- Sub-octave of note 60: line at **138.4 Hz** (= f0/2, note 48) at −74 dBFS
+  in the sub render, absent (−127 dBFS) in the plain render. Sub of 79
+  (note 67, 414.8 Hz) present at −77.7 dBFS (low, matching the −22 dB
+  excess above).
+- T3 chord (60/64/67/72 held): coupler lines at 555.0/699.2/833.4/1109.0 Hz
+  all present in the on render (e.g. 699.2 at −55.5 dBFS vs −62.5 noise
+  level of that region without the layer), i.e. exactly one octave above
+  each chord member.
+
+### Per-member release (T3, coupler on): no residual octave
+
+- Decisive single-note check (T1): coupler excess −6.6 dB during hold →
+  **−29.7 dB** (measurement floor, P_on = P_off exactly) after the note-off.
+  Same for the sub layer and for T3 after all four members release.
+- Line-level (T3, member 64 releasing at 6.2 s): BOTH the main 2nd-harmonic
+  line (698.0 Hz) and the coupler line (699.2 Hz) drop to −116/−119 dBFS in
+  6.6–8.1 s (from −62.9/−54.8 while held) — the coupler voice released with
+  its member; no residual octave.
+- Whole-chord excess windows right after staggered member releases (0.6 s
+  windows) stay elevated — reverb tails of the just-released coupler voices
+  (they decay over ~1 s with the reverb); the long-window and line-level
+  checks above are the authoritative no-residual evidence.
+
+### T5 drone + melody (coupler on)
+
+- Drone-only window (14.8–16.0 s, melody long gone): coupler excess
+  **−4.40 dB** (2 drone couplers vs 2 drone mains) — octave-up energy
+  present on the drone.
+- Melody **unaffected**: the melody-69 line (465.5 Hz, 3.2–4.4 s) measures
+  **−57.2 dBFS in BOTH the coupler-on and coupler-off renders** —
+  bit-identical placement, the layer router doesn't touch melody voices
+  (they sound at the same bellows reference on the same channel as before).
+
+### T10 duplicate NoteOn (the fix's audible signature)
+
+RMS level in ±250 ms windows across each duplicate instant (old behavior
+re-noteoned at the reference velocity = a second/restarted voice ≈ +3 dB
+step; a true onset is a +55 dB step):
+
+| Event | RMS before → after | Δ |
+|---|---|---|
+| 60 onset (0.7 s) | −90.3 → −33.8 dBFS | **+56.5 dB** |
+| 60 duplicate (2.7 s) | −36.3 → −35.9 dBFS | **+0.3 dB** |
+| 64 onset (6.2 s) | −90.3 → −35.6 dBFS | **+54.7 dB** |
+| 64 duplicate (7.7 s) | −35.5 → −37.4 dBFS | **−2.0 dB** |
+
+The ±2 dB wiggle at duplicates equals the note's own in-sample AM (envelope
+peak-to-peak 2.5–3.8 dB over the hold) — no onset transient. Exactly ONE
+release tail per note (each release reaches the −90.3 dBFS s16 floor within
+0.4 s; no second tail).
+
+### T11 multi-channel CC 123 + cross-channel NoteOff
+
+Notes held on channels 0/1/3, CC 123 sent on channel 0 ONLY:
+
+| Window | RMS |
+|---|---|
+| chord hold (2.5–3.15 s) | −31.0 dBFS |
+| +0.3 s after CC 123 (3.5–3.8 s) | **−90.3 dBFS (s16 floor)** |
+| note 72 on ch2 hold (5.4–6.0 s) | −35.5 dBFS |
+| after NoteOff arriving on ch5 (7.4–7.7 s) | **−90.3 dBFS (floor)** |
+
+All voices released by the one-channel CC 123 (old behavior: fluid_synth_cc
+123 on ch0 strands ch1/ch3 as infinite drones — the classic stuck-note
+failure), and the ch2 voice is released by the cross-channel NoteOff (old
+behavior: stranded forever). The renderer feeds whatever channel the MIDI
+file carries, so this is a true multi-channel renderer-level proof (the
+base tracks T1–T9 are ch 0 only).
+
+### Envelope gens survive program_select (channels 14/15)
+
+With `release_ms=2000`, the coupler excess tracks the main's full 2 s
+shaped tail (+0.2–0.7 s after release: −4.1 dB, i.e. coupler tail ≈ main
+tail). If `program_select` had reset the channel generators, the coupler
+(100 ms font release) would collapse ~1.9 s earlier — it does not.
+
+### Config tests / build
+
+- `run_config_tests.sh`: **147/147** checks (was 96; +51 for the `coupler`/
+  `sub_octave` keys — defaults, valid set/get live + pre-init, strict
+  rejection (case/trailing space/empty/junk), mid-phrase toggles
+  interleaved between note events, duplicate-NoteOn swallow, cross-channel
+  noteoffs, CC 123 reset, coupler range clamp at note 120).
+- Clean build (rm -rf build): **0 warnings** (-Wall -Wextra -Wpedantic).
+- Live CLI smoke (timeout 5): startup shows `Synth stop: single` and
+  `Synth layers: coupler=off sub_octave=off (ch15=note+12 CC7=60,
+  ch14=note-12 CC7=40)`, no errors, exit 124 (alive).
+
+**Mid-phrase toggle honesty note:** the renderer applies config before the
+run only; true mid-run toggling is verified at state level (config tests
+interleave `set_config("coupler"/"sub_octave")` between
+`handle_midi_event` calls — voices start/release without error and state
+readback is correct). Audible mid-phrase verification would need a renderer
+config-change mechanism, which was deliberately not invented (no MIDI
+semantics in the harness).
+
+Renders: `tests/renders/p4_*.wav` (gitignored).
+
 ## Listening notes
 
 (reference clips pending — see tests/README.md for the workflow)
@@ -293,3 +427,11 @@ Renders: `tests/renders/p3_*.wav` (gitignored).
   expected slow beat (0.56 Hz @ note 60, 1.85 Hz @ note 79) on top of the
   in-sample ~3 Hz beating. Font plays ~1 semitone sharp vs A440 ET
   (pre-existing, both stops).
+- Phase 4 (2026-09-19): layers (octave coupler / sub-octave) measured at
+  −6.4…−7.8 dB and −11.4…−13.9 dB below the main voice (CC7=60/40 via
+  FluidSynth's CC7→attenuation default modulator; note 79's sub is
+  quieter, −22 dB). The +3¢ coupler detune is visible as a separate
+  spectral line (555.0 Hz next to 554.0 for note 60) — subtle main-vs-octave
+  beat confirmed working. FluidSynth's `program_select` does not reset
+  channel generators (release_ms=2000 tail-tracking proof) nor CC 7 (layer
+  gains persist across stop changes).
