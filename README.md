@@ -46,6 +46,20 @@ This builds exactly three targets:
 
 ## Run
 
+### Interactive launcher (recommended)
+
+```bash
+./naadcore.sh
+```
+
+Walks you through everything: builds the CLI/plugins if needed (dependency
+checks included), scans ALSA MIDI sources (`aconnect -o`) and lets you pick
+one (with a rescan loop when the keyboard isn't plugged in yet), lists the
+built plugins for you to choose, offers audio-driver selection, warns if the
+SoundFont is missing, then launches the CLI. Plain flags are still available:
+
+### Direct CLI invocation
+
 From the project root:
 
 ```bash

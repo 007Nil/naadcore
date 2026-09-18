@@ -5,7 +5,7 @@ plugin — gain/reverb/chorus defaults + live config keys; runtime envelope
 shaping — attack_ms/release_ms live config keys via FluidSynth channel
 generators; plugin-in-loop offline renderer; test harness under tests/;
 SF2 audited — see docs/HARMONIUM_SF2_AUDIT.md; `--audio-driver` CLI flag
-wired through to plugins)
+wired through to plugins; interactive launcher naadcore.sh added)
 
 ## Project purpose
 
@@ -46,6 +46,8 @@ startup — no manual `aconnect` needed.
 ```
 naadcore/
 ├── CMakeLists.txt                  # Root build — exactly 3 targets (see below)
+├── naadcore.sh                     # Interactive launcher: build → MIDI scan/menu
+│                                   #   → plugin menu → driver menu → run CLI
 ├── README.md                       # Build/run instructions (CLI + plugin workflow)
 ├── HANDOVER.md                     # This file
 ├── IMPLEMENTATION_SUMMARY.md       # Implementation history/status
