@@ -4,7 +4,8 @@ Last updated: 2026-09-18 (harmonium realism Phases 0–2: synth voicing pinned i
 plugin — gain/reverb/chorus defaults + live config keys; runtime envelope
 shaping — attack_ms/release_ms live config keys via FluidSynth channel
 generators; plugin-in-loop offline renderer; test harness under tests/;
-SF2 audited — see docs/HARMONIUM_SF2_AUDIT.md)
+SF2 audited — see docs/HARMONIUM_SF2_AUDIT.md; `--audio-driver` CLI flag
+wired through to plugins)
 
 ## Project purpose
 
@@ -195,8 +196,18 @@ Lifecycle: `dlopen` → `naad_plugin_create()` → `init(driver)` → `start_aud
 
 PluginManager (singleton) API: `load_plugin(path)`, `unload_plugin(path)`,
 `route_midi_event(event)`, `get_plugin_info(path)`, `is_plugin_loaded(path)`,
-`get_loaded_plugins()`, `initialize(audio_driver)`, `start_all_audio()`,
-`stop_all_audio()`, `cleanup()`. Thread-safe (recursive mutex).
+`get_loaded_plugins()`, `set_audio_driver(driver)` (driver passed to plugins
+at `init()`; empty/nullptr = plugin's own default), `initialize(audio_driver)`,
+`start_all_audio()`, `stop_all_audio()`, `cleanup()`. Thread-safe (recursive
+mutex).
+
+The CLI parses `--audio-driver <name>` (alsa/pipewire/pulseaudio, default
+alsa) and passes it to the plugin via `PluginManager::set_audio_driver()`
+before loading. Verified: `--audio-driver pulseaudio` starts FluidSynth's
+PulseAudio driver; the native `pipewire` driver fails on this machine's
+FluidSynth 2.4.8 build (missing `pw_init()`, independent of NaadCore) —
+the default `alsa` and `pulseaudio` drivers are both proxied by PipeWire
+anyway.
 
 ## Embedded SoundFont mechanism
 
@@ -386,24 +397,20 @@ To clear a stuck note in a live instance:
    - Phase 5: drone (unpika) + config-key registry doc
    - Phase 7 (envelope work can't fix this): high-register stretch — keys
      65–84 are one F4 sample stretched up to +19 semitones; needs new samples
-   - Reference clips still pending (yt-dlp/sox not installable non-interactively)
-2. **Wire `--audio-driver` through** — the CLI flag is parsed but never passed
-   to `PluginManager::initialize()`; the plugin always uses its internal
-   default (requires a `main.cpp` change — deliberately out of scope of the
-   realism work).
-3. **Multiple plugin support in CLI**: accept several `--plugin` flags or a
+    - Reference clips still pending (yt-dlp/sox not installable non-interactively)
+2. **Multiple plugin support in CLI**: accept several `--plugin` flags or a
    plugin directory; route MIDI to all loaded plugins (PluginManager already
    fans out).
-4. **Plugin configuration surface**: wire `set_config/get_config` to CLI
+3. **Plugin configuration surface**: wire `set_config/get_config` to CLI
    flags, a config file, or MIDI CC mappings (the realism plan recommends
    in-plugin CC mappings to avoid CLI changes).
-5. **Raga selection**: implement raga note filtering in the harmonium plugin
+4. **Raga selection**: implement raga note filtering in the harmonium plugin
    (see docs/CODEBASE_ANALYSIS.md for the harmonium-companion raga/sargam logic
    worth porting).
-6. **Bellows/expression modeling**: map a MIDI controller (CC#11 or velocity
+5. **Bellows/expression modeling**: map a MIDI controller (CC#11 or velocity
    envelope) to harmonium air-pressure expression (deliberately deferred —
    air is assumed 100% for the current realism phases).
-7. **Additional plugins**: pipe organ or drone/tanpura plugin using the same
+6. **Additional plugins**: pipe organ or drone/tanpura plugin using the same
    INaadPlugin contract as a portability proof.
-8. **Packaging**: install rules exist (`bin`, `lib/naadcore`, `lib/naadcore/plugins`);
+7. **Packaging**: install rules exist (`bin`, `lib/naadcore`, `lib/naadcore/plugins`);
    consider CPack or a proper install layout.

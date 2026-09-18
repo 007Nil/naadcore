@@ -269,7 +269,10 @@ early bug prevented event delivery despite the subscription appearing in
 
 The audio driver is set explicitly ("alsa" by default) because auto-selection can
 pick a broken driver on some systems (e.g. an uninitialized SDL3 build), which
-results in silence. `--audio-driver pipewire` or `pulseaudio` are fallbacks.
+results in silence. `--audio-driver pulseaudio` is a working fallback; the
+native `pipewire` driver fails on this machine's FluidSynth 2.4.8 build
+(missing `pw_init()`) — the default `alsa` and `pulseaudio` drivers are
+both proxied by PipeWire anyway.
 
 ### MIDI Event Conversion (CLI)
 

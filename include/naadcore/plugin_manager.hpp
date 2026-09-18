@@ -70,6 +70,13 @@ public:
     std::vector<std::string> get_loaded_plugins() const;
     
     /**
+     * @brief Set the audio driver passed to plugins at init
+     * @param audio_driver Audio driver name (e.g. "alsa", "pipewire",
+     *        "pulseaudio"), or nullptr for the plugin's own default
+     */
+    void set_audio_driver(const char* audio_driver);
+
+    /**
      * @brief Initialize plugin system
      * @param audio_driver Audio driver to use for plugins
      * @return PLUGIN_OK on success, error code otherwise

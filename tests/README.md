@@ -92,10 +92,12 @@ that analyze.py applies automatically.
 
 **The PipeWire/pulse path works.** Details:
 
-1. The plugin's internal default is the ALSA audio driver (the CLI's
-   `--audio-driver` flag is parsed but NOT wired through — known dead-flag
-   bug). PipeWire's ALSA plugin (`pipewire-alsa`) proxies the CLI's ALSA
-   output, so a stream appears in `pactl list short sink-inputs`.
+1. The plugin's internal default is the ALSA audio driver. PipeWire's ALSA
+   plugin (`pipewire-alsa`) proxies the CLI's ALSA output, so a stream
+   appears in `pactl list short sink-inputs`. (The CLI's `--audio-driver`
+   flag IS wired through since 2026-09-18, but FluidSynth's native
+   `pipewire` driver fails on this machine — missing `pw_init()` — so the
+   default ALSA path remains the working capture route.)
 2. `capture_live.sh` snapshots sink-inputs, starts the CLI (subscribed to
    the Midi Through port so no keyboard is needed), finds the new
    sink-input index, and captures it with `parecord --monitor-stream=<idx>`.

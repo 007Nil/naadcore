@@ -114,6 +114,7 @@ int NaadCoreCLI::run() {
     std::cout << "Loading plugin: " << plugin_path_ << std::endl;
     
     PluginManager& pm = PluginManager::instance();
+    pm.set_audio_driver(audio_driver_.c_str());
     PluginResult result = pm.load_plugin(plugin_path_);
     if (result != PLUGIN_OK) {
         std::cerr << "Failed to load plugin: " << plugin_path_ << std::endl;

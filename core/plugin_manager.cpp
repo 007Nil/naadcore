@@ -169,6 +169,11 @@ std::vector<std::string> PluginManager::get_loaded_plugins() const {
     return paths;
 }
 
+void PluginManager::set_audio_driver(const char* audio_driver) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    audio_driver_ = audio_driver ? audio_driver : "";
+}
+
 PluginResult PluginManager::initialize(const char* audio_driver) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     

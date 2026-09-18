@@ -138,7 +138,9 @@ stops.
    natural decay), so a lost NoteOff plays endlessly. Fix: press the droning
    key once more, or send All Notes Off (also resets the bellows state):
    `aseqsend -p 129:0 "B0 7B 00"` (use the actual port from `aconnect -l`)
-3. Try another audio driver: `--audio-driver pipewire` (or `pulseaudio`)
+3. Try another audio driver: `--audio-driver pulseaudio` (the native `pipewire`
+   driver fails on this machine's FluidSynth build — the default `alsa` and
+   `pulseaudio` drivers are both proxied by PipeWire anyway)
 4. Check the subscription: `aconnect -l` must show `Connected From: 20:0` on the
    `naadcore input` port
 5. Verify the Q49 is sending: `aseqdump -p 20:0` while pressing keys
