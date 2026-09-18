@@ -1,8 +1,10 @@
 # NaadCore Handover — Authoritative State Document
 
-Last updated: 2026-09-18 (harmonium realism Phases 0–1: synth voicing pinned in
-plugin — gain/reverb/chorus defaults + live config keys; test harness added
-under tests/; SF2 audited — see docs/HARMONIUM_SF2_AUDIT.md)
+Last updated: 2026-09-18 (harmonium realism Phases 0–2: synth voicing pinned in
+plugin — gain/reverb/chorus defaults + live config keys; runtime envelope
+shaping — attack_ms/release_ms live config keys via FluidSynth channel
+generators; plugin-in-loop offline renderer; test harness under tests/;
+SF2 audited — see docs/HARMONIUM_SF2_AUDIT.md)
 
 ## Project purpose
 
@@ -68,9 +70,10 @@ naadcore/
 │   ├── README.md                   # Harness guide, tool status, capture paths
 │   ├── RESULTS.md                  # A/B score sheet + objective measurements
 │   ├── analyze.py                  # WAV analysis (onset/release/AM/peak/RMS)
-│   ├── test_plugin_config.cpp      # Config-seam unit tests (43 checks)
+│   ├── test_plugin_config.cpp      # Config-seam unit tests (76 checks)
 │   ├── midi/                       # 7 generated test tracks (T1–T7)
-│   ├── scripts/                    # gen_midi.py, render_sf2.sh, capture_live.sh, ...
+│   ├── scripts/                    # gen_midi.py, render_sf2.sh, capture_live.sh,
+│   │                               #   render_plugin.cpp, run_render_plugin.sh, ...
 │   ├── timings/                    # Note timing files used by analyze.py
 │   ├── renders/                    # Rendered/captured WAVs (gitignored)
 │   └── references/                 # Reference clips (gitignored, personal use)
@@ -263,12 +266,57 @@ Live config keys (via `set_config`/`get_config`, no CLI surface yet):
 | `gain` | float 0–10 | `fluid_synth_set_gain`, strict validation |
 | `reverb` | on/off | `fluid_synth_reverb_on` all groups |
 | `chorus` | on/off | `fluid_synth_chorus_on` all groups |
+| `attack_ms` | int 1–2000 | vol-env attack via `GEN_VOLENVATTACK` (Phase 2) |
+| `release_ms` | int 1–4000 | vol-env release via `GEN_VOLENVRELEASE` (Phase 2) |
 
 Plus the pre-existing keys: `soundfont_path`, `audio_driver`.
 
-Verified: 43/43 config-seam checks pass (`tests/scripts/run_config_tests.sh`);
+Verified: 76/76 config-seam checks pass (`tests/scripts/run_config_tests.sh`);
 live capture peak level matches the offline render exactly (−25.7 dBFS for
 note 60 @ vel 100).
+
+## Volume-envelope shaping (Phase 2, 2026-09-18)
+
+The SF2 has a clicky ~1 ms attack and a 100 ms release (see
+docs/HARMONIUM_SF2_AUDIT.md). Phase 2 shapes both **at runtime via FluidSynth
+channel generators** (`fluid_synth_set_gen` with `GEN_VOLENVATTACK` /
+`GEN_VOLENVRELEASE` on all 16 MIDI channels) — the SF2 file is untouched.
+
+- Defaults: `attack_ms_` = 10 (softened reed speech), `release_ms_` = 200
+  (breathier bellows tail). Sustain is left at the font's full level
+  (0 cB attenuation) — organ-like, correct for harmonium.
+- Applied in `init()` (before `sfload` — verified the generators survive
+  font loading) and on every live `attack_ms`/`release_ms` set_config change
+  (`apply_envelope_gens()`). Second log line: `Synth envelope:
+  attack_ms=… release_ms=…`.
+- Top octave (keys 65–84) is one F4 sample stretched up to +19 semitones —
+  NOT addressable by envelope work; needs new samples (Phase 7, open).
+
+**set_gen override-vs-additive finding (calibrated empirically, 2026-09-18,
+FluidSynth 2.4.8, raw-FluidSynth file-driver renders measured with
+tests/analyze.py):**
+
+- `fluid_synth_set_gen` values are **ADDITIVE OFFSETS** on top of the
+  instrument zone's generator values, NOT overrides: release gen 0 left the
+  font's 100 ms release at 99 ms (override would give 1000 ms); +1200 gave
+  203 ms measured (override would give 2 s); −3986 gave 17 ms (override
+  would give 100 ms). Same for the attack gen.
+- Offsets are **not clamped** to the SF2 spec range (±12000): an attack
+  offset of +13200 produced the full 2 s nominal attack (a ±12000 clamp
+  would have produced 1 s).
+- There is no `fluid_synth_set_gen2` in 2.4.8 — only
+  `fluid_synth_set_gen`/`fluid_synth_get_gen`. Generator enum names are
+  `GEN_VOLENVATTACK`/`GEN_VOLENVRELEASE` (gen.h), not `FLUID_GEN_*`.
+- Compensation: the plugin converts the requested absolute time to the
+  offset that moves the font's own base value to it:
+  `offset_tc = 1200·log2(ms/1000) − base_tc` with the font bases
+  `kSf2AttackTc = −12000` (~1 ms) and `kSf2ReleaseTc = −3986` (100 ms)
+  from the audit. Sustain is not touched.
+
+Measured effect (live captures, same analysis pipeline both sides —
+tests/RESULTS.md has the full table): T1 release-to-−60 dB 46–70 ms →
+81–122 ms; T4 staccato 80/80 onsets still distinct, tail at the next onset
+≈44 dB below the note peak (no smear).
 
 ## Harmonium realism test harness (Phase 0, 2026-09-18)
 
@@ -276,7 +324,13 @@ note 60 @ vel 100).
 
 - 7 test MIDI tracks (T1–T7): envelope, legato, chords, staccato, drone,
   repertoire phrase, velocity sweep — channel 0, no CCs/program changes
-- `render_sf2.sh` — offline FluidSynth render (baseline/phase-voicing modes)
+- `render_sf2.sh` — offline FluidSynth render (baseline/phase-voicing modes).
+  NOTE: cannot reflect plugin behavior (the CLI can't set generators) — use
+  the plugin-in-loop renderer below for that
+- `run_render_plugin.sh` + `render_plugin.cpp` — offline render with the
+  actual plugin .so IN the loop (dlopen + FluidSynth "file" audio driver,
+  MIDI file events fed at file timing). Reflects voicing, envelope
+  generators, and bellows velocity. Real-time (~1.15× track length).
 - `capture_live.sh` — live capture through CLI → plugin → audio. On this
   machine the PipeWire path works: the plugin's ALSA output is proxied by
   `pipewire-alsa`, the stream is captured with `parecord --monitor-stream`
@@ -325,13 +379,13 @@ To clear a stuck note in a live instance:
 
 ## Suggested next steps
 
-1. **Harmonium realism Phases 2+** (active effort — Phases 0–1 complete):
-   - Phase 2: SF2 envelope surgery — release tail (~80–250 ms), attack,
-     high-register stretch mitigation (keys 65–84 are one stretched sample)
+1. **Harmonium realism Phases 3+** (active effort — Phases 0–2 complete):
    - Phase 3: 2-reed detuned layering via SF2 presets + `stop` config key
    - Phase 4: octave coupler / sub-octave layer router; duplicate-NoteOn
      ignore; CC 123 across all 16 channels
    - Phase 5: drone (unpika) + config-key registry doc
+   - Phase 7 (envelope work can't fix this): high-register stretch — keys
+     65–84 are one F4 sample stretched up to +19 semitones; needs new samples
    - Reference clips still pending (yt-dlp/sox not installable non-interactively)
 2. **Wire `--audio-driver` through** — the CLI flag is parsed but never passed
    to `PluginManager::initialize()`; the plugin always uses its internal

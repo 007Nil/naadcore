@@ -1,5 +1,14 @@
 # Harmonium SoundFont Audit (Phase 1)
 
+> **Phase 2 disposition (2026-09-18):** the envelope items below are now
+> addressed **at runtime** — the plugin shapes attackVolEnv (default 10 ms)
+> and releaseVolEnv (default 200 ms) via FluidSynth channel generators
+> (`GEN_VOLENVATTACK`/`GEN_VOLENVRELEASE`, live keys `attack_ms`/
+> `release_ms`; see HANDOVER.md "Volume-envelope shaping"). This SF2 file
+> was **not modified**. The high-register stretch (keys 65–84 = one F4
+> sample up to +19 semitones) is envelope-unfixable and remains open for
+> Phase 7 (new samples). Sustain stays full — correct for organ-type reeds.
+
 Audit of `/home/nil/harmonium-companion/harmonium.sf2` (the SoundFont
 compiled into the harmonium plugin via `HARMONIUM_SOUNDFONT_PATH`).
 

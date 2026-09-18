@@ -14,11 +14,14 @@ tests/
 │   ├── gen_midi.py        # regenerates tests/midi/ (pure stdlib, no mido)
 │   ├── render_sf2.sh      # offline FluidSynth render of a track
 │   ├── capture_live.sh    # live capture through CLI -> plugin -> audio
+│   ├── render_plugin.cpp  # plugin-in-loop offline renderer (ad hoc)
+│   ├── run_render_plugin.sh # compiles+runs render_plugin.cpp (ad hoc)
 │   ├── sf2_audit.py       # SF2 binary structure dump (Phase 1 audit)
 │   └── run_config_tests.sh# compiles+runs test_plugin_config.cpp (ad hoc,
 │                          #   not wired into the project CMake build)
 ├── analyze.py             # numpy WAV analysis (onset/release/AM/peak/RMS)
-├── test_plugin_config.cpp # config-seam tests (gain/reverb/chorus live keys)
+├── test_plugin_config.cpp # config-seam tests (gain/reverb/chorus +
+│                          #   attack_ms/release_ms live keys, 76 checks)
 ├── renders/               # rendered/captured WAVs (gitignored)
 ├── references/            # personal-use reference clips (gitignored)
 ├── RESULTS.md             # A/B score sheet + objective measurements
@@ -70,8 +73,14 @@ tests/scripts/capture_live.sh tests/midi/T1_single_note_envelope.mid
 python3 tests/analyze.py tests/renders/baseline_phase0_sf2_T1_single_note_envelope.wav
 python3 tests/analyze.py tests/renders/<capture>.wav <timing.txt>
 
-# 6. Config-seam unit tests (gain/reverb/chorus live keys)
+# 6. Config-seam unit tests (gain/reverb/chorus/attack_ms/release_ms)
 tests/scripts/run_config_tests.sh
+
+# 7. Offline render through the REAL plugin (no audio hardware needed;
+#    reflects voicing, envelope generators, bellows velocity — which
+#    render_sf2.sh cannot). Real-time: ~1.15x track length.
+tests/scripts/run_render_plugin.sh tests/midi/T1_single_note_envelope.mid \
+    tests/renders/my_plugin_render.wav 3
 ```
 
 Timing files are plain text: `start_s end_s label` per line (see
@@ -102,6 +111,27 @@ that analyze.py applies automatically.
 The pure-ALSA snd-aloop fallback in the script (modprobe snd-aloop +
 `~/.asoundrc` redirect + `arecord -D plughw:Loopback,1,0`) was NOT needed
 here and is untested on this machine (modprobe needs root).
+
+## Plugin-in-loop offline rendering (Phase 2, 2026-09-18)
+
+`tests/scripts/render_plugin.cpp` (run via `tests/scripts/run_render_plugin.sh`)
+closes the gap that `render_sf2.sh` could never reflect plugin behavior: it
+dlopens the actual `libharmonium_plugin.so` (same mechanism as
+PluginManager), initializes it with the FluidSynth **"file" audio driver**,
+parses the MIDI file itself (format 0/1, tempo-mapped, running status), and
+feeds each event to the plugin at its file time over the wall clock (the
+file driver renders in real time), then renames the driver's `fluidsynth.wav`
+output to the requested path.
+
+- Usage: `tests/scripts/run_render_plugin.sh <track.mid> <out.wav> [tail_s]`
+- A 20 s track takes ~23 s wall clock (real-time render).
+- Caveats: needs a writable CWD-relative output directory (the harness
+  chdirs there for the driver's default `fluidsynth.wav`); no `dlclose()` at
+  exit (same FluidSynth/GLib teardown crash as test_plugin_config.cpp);
+  event timing lands within a few ms of nominal (driver timer jitter) —
+  fine at analyze.py's 5.8 ms resolution.
+- Validated on T1/T4 against the live captures: peak levels identical,
+  release behavior matches (see RESULTS.md Phase 2 section).
 
 ## Reference-clip workflow
 

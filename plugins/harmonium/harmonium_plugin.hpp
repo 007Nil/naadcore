@@ -49,7 +49,16 @@ private:
     float gain_ = 0.4f;
     bool reverb_on_ = true;
     bool chorus_on_ = false;
-    
+
+    // Volume-envelope shaping (Phase 2). The SF2 has an ~1 ms instant
+    // attack (clicky reed speech) and a 100 ms explicit release; these
+    // defaults soften the speech to 10 ms and stretch the bellows tail
+    // to 200 ms via FluidSynth channel generators (set_gen values are
+    // additive offsets — see HANDOVER.md "Volume-envelope shaping" for
+    // the calibrated override-vs-additive finding).
+    int attack_ms_ = 10;
+    int release_ms_ = 200;
+
     // Uniform bellows velocity: a real harmonium's bellows drive all open
     // reeds at the same pressure, so keys pressed together sound at the
     // first key's velocity. Each held key remembers its original press
@@ -66,6 +75,12 @@ private:
 
     std::vector<HeldNote>::iterator find_held(uint8_t note);
     void release_held_note(uint8_t note);
+
+    /// Apply attack_ms_/release_ms_ as volume-envelope generators on all
+    /// MIDI channels (no-op before init(); applied there and on live
+    /// set_config changes). Safe to call before the SoundFont is loaded —
+    /// channel generators survive sfload and program resets.
+    void apply_envelope_gens();
 };
 
 } // namespace naadcore

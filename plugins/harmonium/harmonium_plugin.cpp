@@ -1,6 +1,7 @@
 #include "harmonium_plugin.hpp"
 #include <iostream>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -10,6 +11,21 @@
 #endif
 
 namespace naadcore {
+
+namespace {
+
+// Volume-envelope bases baked into harmonium.sf2 (docs/HARMONIUM_SF2_AUDIT.md):
+// attackVolEnv is the SF2 default (~1 ms, -12000 timecents), releaseVolEnv is
+// explicitly 100 ms (-3986 timecents), sustain is full (0 cB attenuation).
+constexpr double kSf2AttackTc = -12000.0;   ///< ~1 ms (SF2 default)
+constexpr double kSf2ReleaseTc = -3986.0;   ///< 100 ms (explicit in the font)
+
+// SF2 envelope time generators are in timecents: tc = 1200 * log2(seconds).
+double ms_to_timecents(double ms) {
+    return 1200.0 * std::log2(ms / 1000.0);
+}
+
+} // namespace
 
 HarmoniumPlugin::HarmoniumPlugin()
     : settings_(nullptr), synth_(nullptr), driver_(nullptr),
@@ -78,6 +94,14 @@ PluginResult HarmoniumPlugin::init(const char* audio_driver) {
               << " chorus=" << (chorus_on_ ? "on" : "off")
               << " interp=4th-order" << std::endl;
 
+    // Volume-envelope shaping (Phase 2): soften the reed speech (10 ms ramp
+    // over the font's clicky ~1 ms attack) and stretch the release into a
+    // breathier bellows tail (200 ms over the font's 100 ms). Live-adjustable
+    // via the attack_ms / release_ms config keys.
+    apply_envelope_gens();
+    std::cout << "Synth envelope: attack_ms=" << attack_ms_
+              << " release_ms=" << release_ms_ << std::endl;
+
     // Load SoundFont (embedded path)
     soundfont_id_ = load_soundfont();
     if (soundfont_id_ < 0) {
@@ -100,6 +124,33 @@ int HarmoniumPlugin::load_soundfont() {
         std::cout << "Loaded SoundFont: " << soundfont_path_ << " (ID: " << id << ")" << std::endl;
     }
     return id;
+}
+
+void HarmoniumPlugin::apply_envelope_gens() {
+    if (!synth_) {
+        return;
+    }
+    // FluidSynth 2.4 applies fluid_synth_set_gen() values as channel-gen
+    // OFFSETS added on top of the instrument zone's generator values
+    // (calibrated empirically 2026-09-18 against the ~100 ms SF2 release,
+    // raw file-driver renders measured with tests/analyze.py: setting 0
+    // left the release at 99 ms, +1200 gave 203 ms, -3986 dropped it to
+    // 17 ms — override semantics would have given 1 s / 2 s / 100 ms;
+    // offsets are also not clamped — see HANDOVER.md). So the requested
+    // absolute time is converted to the offset that moves the font's own
+    // base value to the desired time. Channel-gen offsets are not clamped
+    // to the SF2 spec range, so the full 1..2000 / 1..4000 ms config range
+    // is reachable. Sustain is left alone: the font already holds it at
+    // full level (0 cB attenuation).
+    const float attack_tc =
+        static_cast<float>(ms_to_timecents(attack_ms_) - kSf2AttackTc);
+    const float release_tc =
+        static_cast<float>(ms_to_timecents(release_ms_) - kSf2ReleaseTc);
+    int midi_channels = fluid_synth_count_midi_channels(synth_);
+    for (int ch = 0; ch < midi_channels; ++ch) {
+        fluid_synth_set_gen(synth_, ch, GEN_VOLENVATTACK, attack_tc);
+        fluid_synth_set_gen(synth_, ch, GEN_VOLENVRELEASE, release_tc);
+    }
 }
 
 PluginResult HarmoniumPlugin::start_audio() {
@@ -255,6 +306,12 @@ std::string HarmoniumPlugin::get_config(const char* key) {
     if (k == "chorus") {
         return chorus_on_ ? "on" : "off";
     }
+    if (k == "attack_ms") {
+        return std::to_string(attack_ms_);
+    }
+    if (k == "release_ms") {
+        return std::to_string(release_ms_);
+    }
 
     return "";
 }
@@ -312,6 +369,32 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
         }
         if (synth_) {
             fluid_synth_chorus_on(synth_, -1, chorus_on_ ? 1 : 0);
+        }
+        return PLUGIN_OK;
+    }
+    if (k == "attack_ms") {
+        std::string v = value;
+        char* end = nullptr;
+        long ms = std::strtol(v.c_str(), &end, 10);
+        if (end == v.c_str() || *end != '\0' || !(ms >= 1 && ms <= 2000)) {
+            return PLUGIN_INVALID_PARAM;
+        }
+        attack_ms_ = static_cast<int>(ms);
+        if (synth_) {
+            apply_envelope_gens();
+        }
+        return PLUGIN_OK;
+    }
+    if (k == "release_ms") {
+        std::string v = value;
+        char* end = nullptr;
+        long ms = std::strtol(v.c_str(), &end, 10);
+        if (end == v.c_str() || *end != '\0' || !(ms >= 1 && ms <= 4000)) {
+            return PLUGIN_INVALID_PARAM;
+        }
+        release_ms_ = static_cast<int>(ms);
+        if (synth_) {
+            apply_envelope_gens();
         }
         return PLUGIN_OK;
     }

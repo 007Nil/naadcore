@@ -1,4 +1,5 @@
-// Config-seam tests for the harmonium plugin (gain/reverb/chorus live keys).
+// Config-seam tests for the harmonium plugin (gain/reverb/chorus and
+// Phase 2 envelope attack_ms/release_ms live keys).
 //
 // Loads libharmonium_plugin.so via dlopen (same mechanism as PluginManager)
 // and exercises set_config/get_config, including live changes after init().
@@ -62,10 +63,14 @@ int main(int argc, char** argv) {
     check_eq("default reverb", p->get_config("reverb"), "on");
     check_eq("default chorus", p->get_config("chorus"), "off");
     check_eq("default audio_driver", p->get_config("audio_driver"), "alsa");
+    check_eq("default attack_ms", p->get_config("attack_ms"), "10");
+    check_eq("default release_ms", p->get_config("release_ms"), "200");
 
     // init (no audio driver started)
     check_result("init", p->init(nullptr), naadcore::PLUGIN_OK);
     check_eq("gain after init", p->get_config("gain"), "0.400");
+    check_eq("attack_ms after init", p->get_config("attack_ms"), "10");
+    check_eq("release_ms after init", p->get_config("release_ms"), "200");
 
     // live gain
     check_result("gain 1.5", p->set_config("gain", "1.5"),
@@ -112,6 +117,72 @@ int main(int argc, char** argv) {
     check_result("chorus bad value", p->set_config("chorus", "yes"),
                  naadcore::PLUGIN_INVALID_PARAM);
 
+    // live envelope shaping (Phase 2: attack_ms / release_ms)
+    check_result("attack_ms 25", p->set_config("attack_ms", "25"),
+                 naadcore::PLUGIN_OK);
+    check_eq("attack_ms reads 25", p->get_config("attack_ms"), "25");
+    check_result("release_ms 350", p->set_config("release_ms", "350"),
+                 naadcore::PLUGIN_OK);
+    check_eq("release_ms reads 350", p->get_config("release_ms"), "350");
+    // boundary values are accepted
+    check_result("attack_ms 1 ok", p->set_config("attack_ms", "1"),
+                 naadcore::PLUGIN_OK);
+    check_result("attack_ms 2000 ok", p->set_config("attack_ms", "2000"),
+                 naadcore::PLUGIN_OK);
+    check_result("release_ms 1 ok", p->set_config("release_ms", "1"),
+                 naadcore::PLUGIN_OK);
+    check_result("release_ms 4000 ok", p->set_config("release_ms", "4000"),
+                 naadcore::PLUGIN_OK);
+    check_eq("release_ms reads 4000", p->get_config("release_ms"), "4000");
+    // out of range rejected
+    check_result("attack_ms 2001 out of range",
+                 p->set_config("attack_ms", "2001"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("attack_ms 0 out of range",
+                 p->set_config("attack_ms", "0"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("attack_ms negative",
+                 p->set_config("attack_ms", "-5"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("release_ms 4001 out of range",
+                 p->set_config("release_ms", "4001"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("release_ms 0 out of range",
+                 p->set_config("release_ms", "0"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("release_ms negative",
+                 p->set_config("release_ms", "-1"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    // junk rejected (integer keys also reject floats)
+    check_result("attack_ms not a number",
+                 p->set_config("attack_ms", "abc"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("attack_ms float rejected",
+                 p->set_config("attack_ms", "10.5"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("attack_ms nan rejected",
+                 p->set_config("attack_ms", "nan"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("attack_ms empty rejected",
+                 p->set_config("attack_ms", ""),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("release_ms not a number",
+                 p->set_config("release_ms", "banana"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("release_ms float rejected",
+                 p->set_config("release_ms", "12.5"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("release_ms inf rejected",
+                 p->set_config("release_ms", "inf"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("release_ms empty rejected",
+                 p->set_config("release_ms", ""),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_eq("attack_ms unchanged after rejects", p->get_config("attack_ms"),
+             "2000");
+    check_eq("release_ms unchanged after rejects", p->get_config("release_ms"),
+             "4000");
+
     // pre-existing keys still work
     check_result("soundfont_path set", p->set_config("soundfont_path", "/x"),
                  naadcore::PLUGIN_OK);
@@ -143,12 +214,19 @@ int main(int argc, char** argv) {
     // config set before init is applied at init
     auto* q = create();
     check_result("pre-init gain 2.5", q->set_config("gain", "2.5"),
-                 naadcore::PLUGIN_OK);
+                  naadcore::PLUGIN_OK);
     check_result("pre-init reverb off", q->set_config("reverb", "off"),
-                 naadcore::PLUGIN_OK);
+                  naadcore::PLUGIN_OK);
+    check_result("pre-init attack_ms 15", q->set_config("attack_ms", "15"),
+                  naadcore::PLUGIN_OK);
+    check_result("pre-init release_ms 300", q->set_config("release_ms", "300"),
+                  naadcore::PLUGIN_OK);
     check_result("q init", q->init(nullptr), naadcore::PLUGIN_OK);
     check_eq("pre-init gain applied", q->get_config("gain"), "2.500");
     check_eq("pre-init reverb applied", q->get_config("reverb"), "off");
+    check_eq("pre-init attack_ms applied", q->get_config("attack_ms"), "15");
+    check_eq("pre-init release_ms applied", q->get_config("release_ms"),
+             "300");
     q->stop_audio();
     destroy(q);
 
