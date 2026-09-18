@@ -1,24 +1,33 @@
 # NaadCore Handover — Authoritative State Document
 
-Last updated: 2026-09-19 (harmonium realism Phase 4: internal layer router —
-octave coupler on internal channel 15 (note+12, ~6–8 dB below main, +3¢
-detuned) and sub-octave on channel 14 (note−12, ~11–14 dB below main),
-`coupler` / `sub_octave` live config keys with mid-phrase toggling while
-notes are held; pitch bend + CC 11 mirrored to layers, CC 7 deliberately
-NOT mirrored (it IS the layer gain); duplicate NoteOn on a held key now
-IGNORED (no re-attack — audible change from Phase ≤3); CC 123 hardened to
-all_notes_off on ALL 16 channels; cross-channel NoteOff releases voices on
-the note's original channel; 147/147 config tests; see "Layer router
-(Phase 4)" below. Phases 0–3 unchanged: synth voicing pinned in plugin —
-gain/reverb/chorus defaults + live config keys; runtime envelope shaping —
-attack_ms/release_ms live config keys via FluidSynth channel generators;
-reed stops — `stop` config key (single/double) selecting presets in the
-in-repo derived font plugins/harmonium/soundfonts/harmonium_v2.sf2,
-PROGRAM_CHANGE events ignored; uniform bellows velocity model (held_notes_
-vector, reference_velocity_ latch/baton-pass); plugin-in-loop offline
-renderer with KEY=VALUE config overrides; test harness under tests/;
-SF2 audited — see docs/HARMONIUM_SF2_AUDIT.md; `--audio-driver` CLI flag
-wired through; interactive launcher naadcore.sh added)
+Last updated: 2026-09-19 (harmonium realism Phase 5: drone (unpika) on
+internal channel 13 — config-controlled fixture notes ("drone" key:
+"off" or up to 8 comma-separated MIDI note numbers) that sound continuously
+under the melody, never touch the bellows model, start at fixed velocity 100
+with their loudness from the `drone_level` key (CC 7 on ch13, default 45,
+measured ≈11–14 dB under the melody fundamental), live add/remove semantics
+(start new / release removed / keep unchanged), NOT cleared-and-forgotten by
+CC 123 (voices silenced, spec kept — re-set restarts), no pitch-bend/CC11
+mirroring; channels 13/14/15 now all reserved; authoritative config-key
+registry created at docs/HARMONIUM_CONFIG.md; 213/213 config tests; see
+"Drone (Phase 5)" below. Phases 0–4 unchanged: synth voicing pinned in
+plugin — gain/reverb/chorus defaults + live config keys; runtime envelope
+shaping — attack_ms/release_ms live config keys via FluidSynth channel
+generators; reed stops — `stop` config key (single/double) selecting presets
+in the in-repo derived font plugins/harmonium/soundfonts/harmonium_v2.sf2,
+PROGRAM_CHANGE events ignored; layer router — octave coupler on internal
+channel 15 (note+12, ~6–8 dB below main, +3¢ detuned) and sub-octave on
+channel 14 (note−12, ~11–14 dB below main), `coupler` / `sub_octave` live
+config keys with mid-phrase toggling while notes are held; pitch bend +
+CC 11 mirrored to layers, CC 7 deliberately NOT mirrored (it IS the layer
+gain); duplicate NoteOn on a held key now IGNORED (no re-attack — audible
+change from Phase ≤3); CC 123 hardened to all_notes_off on ALL 16 channels
+plus drone reset; cross-channel NoteOff releases voices on the note's
+original channel; uniform bellows velocity model (held_notes_ vector,
+reference_velocity_ latch/baton-pass); plugin-in-loop offline renderer with
+KEY=VALUE config overrides; test harness under tests/; SF2 audited — see
+docs/HARMONIUM_SF2_AUDIT.md; `--audio-driver` CLI flag wired through;
+interactive launcher naadcore.sh added)
 
 ## Project purpose
 
@@ -92,14 +101,15 @@ naadcore/
 │   ├── README.md                   # Harness guide, tool status, capture paths
 │   ├── RESULTS.md                  # A/B score sheet + objective measurements
 │   ├── analyze.py                  # WAV analysis (onset/release/AM/peak/RMS)
-│   ├── test_plugin_config.cpp      # Config-seam unit tests (147 checks)
-│   ├── midi/                       # 7 base test tracks (T1–T7) + T8–T11
-│   │                               #   Phase 3/4 probe tracks
+│   ├── test_plugin_config.cpp      # Config-seam unit tests (213 checks)
+│   ├── midi/                       # 7 base test tracks (T1–T7) + T8–T13
+│   │                               #   Phase 3/4/5 probe tracks
 │   ├── scripts/                    # gen_midi.py, render_sf2.sh, capture_live.sh,
 │   │                               #   render_plugin.cpp, run_render_plugin.sh,
 │   │                               #   derive_sf2.py (Phase 3 SF2 surgery),
 │   │                               #   am_spectrum.py (AM-band spectrum),
-│   │                               #   gen_probes_phase4.py (T10/T11 probes), ...
+│   │                               #   gen_probes_phase4.py (T10/T11),
+│   │                               #   gen_probes_phase5.py (T12/T13), ...
 │   ├── timings/                    # Note timing files used by analyze.py
 │   ├── renders/                    # Rendered/captured WAVs (gitignored)
 │   └── references/                 # Reference clips (gitignored, personal use)
@@ -109,6 +119,8 @@ naadcore/
     ├── PLUGIN_SYSTEM_IMPLEMENTATION.md # Implementation notes (current)
     ├── PLUGIN_DEVELOPMENT.md       # Guide for writing new plugins
     ├── HARMONIUM_SF2_AUDIT.md      # harmonium.sf2 structure audit (Phase 1)
+    ├── HARMONIUM_CONFIG.md         # Authoritative config-key registry
+    │                               #   (all set_config/get_config keys, Phase 5)
     ├── NAADCORE_MVP_CHALLENGE.md   # HISTORICAL: MVP design record (completed)
     ├── CODEBASE_ANALYSIS.md        # Analysis of the separate harmonium-companion web project
     └── README.md                   # Technical notes / API reference
@@ -163,6 +175,8 @@ Synth voicing: gain=0.4 reverb=on chorus=off interp=4th-order
 Synth envelope: attack_ms=10 release_ms=200
 Loaded SoundFont: /home/nil/Projects/Personal/naadcore/plugins/harmonium/soundfonts/harmonium_v2.sf2 (ID: 1)
 Synth stop: single
+Synth layers: coupler=off sub_octave=off (ch15=note+12 CC7=60, ch14=note-12 CC7=40)
+Synth drone: off (ch13 CC7=45 vel=100)
 Loaded plugin: harmonium v1.0.0 (./build/plugins/libharmonium_plugin.so)
 Plugin: harmonium v1.0.0
 Starting audio...
@@ -294,7 +308,8 @@ Semantics:
 - **CC 123 (All Notes Off)** clears the sequence state AND calls
   `fluid_synth_all_notes_off` on ALL 16 channels (a one-channel CC 123 only
   cleared that channel — layer voices on internal channels 14/15 would have
-  been stranded).
+  been stranded). Since Phase 5 it also clears the drone's sounding-note
+  container (see "Drone (Phase 5)").
 
 State: `std::vector<HeldNote> held_notes_` (`{note, original press velocity,
 channel, sounding_velocity, layers}`, front = oldest pressed) +
@@ -329,12 +344,18 @@ Live config keys (via `set_config`/`get_config`, no CLI surface yet):
 | `stop` | single/double | reed stop → SoundFont preset via `program_select` (Phase 3) |
 | `coupler` | on/off | octave coupler layer (Phase 4) |
 | `sub_octave` | on/off | sub-octave layer (Phase 4) |
+| `drone` | off / note list | drone fixture on channel 13 (Phase 5) |
+| `drone_level` | int 0–127 | drone gain, CC 7 on channel 13 (Phase 5) |
 
 Plus the pre-existing keys: `soundfont_path`, `audio_driver`.
 
-Verified: 96/96 config-seam checks pass (`tests/scripts/run_config_tests.sh`);
-live capture peak level matches the offline render exactly (−25.7 dBFS for
-note 60 @ vel 100).
+**The authoritative per-key contract** (type/format, defaults, live-vs-init
+semantics, echo behavior, invalid-input behavior, FluidSynth mechanism) now
+lives in **docs/HARMONIUM_CONFIG.md** — consult that registry first.
+
+Verified: 96/96 config-seam checks at the time (now 213/213 — see
+tests/RESULTS.md; `tests/scripts/run_config_tests.sh`); live capture peak
+level matches the offline render exactly (−25.7 dBFS for note 60 @ vel 100).
 
 ## Volume-envelope shaping (Phase 2, 2026-09-18)
 
@@ -448,16 +469,17 @@ defaults to the in-repo derived font (`HARMONIUM_SOUNDFONT` env overrides).
 
 The plugin routes each held note to up to three FluidSynth voices: the main
 voice on the incoming channel, plus optional fixed internal layers, all on
-the current `stop` preset. Channels 14/15 are RESERVED for the router —
-MIDI input arriving on them from a controller will collide with layer
-voices (the Q49 sends on one channel only; document any multi-channel
-controller use).
+the current `stop` preset. Channels 13/14/15 are RESERVED for the router and
+drone — MIDI input arriving on them from a controller will collide with
+layer/drone voices (the Q49 sends on one channel only; document any
+multi-channel controller use).
 
 | Layer | Internal channel | Pitch | Gain (measured vs main voice) | Config key |
 |---|---|---|---|---|
-| main | incoming channel (0–13 used) | note | 0 dB | — |
+| main | incoming channel (0–12 safe) | note | 0 dB | — |
 | octave coupler | **15** | note+12 | **−6.4…−7.8 dB** (CC7=60) | `coupler` (default off) |
 | sub-octave | **14** | note−12 | **−11.4…−13.9 dB** (CC7=40; −22 dB measured at note 79 — its sub sample sits lower) | `sub_octave` (default off) |
+| drone (Phase 5) | **13** | fixed spec | **−11…−14 dB** under the melody (CC7=45) | `drone` / `drone_level` |
 
 - **All layer voices sound at `reference_velocity_`** (the bellows reference
   at press time) — the uniform bellows velocity model is untouched: one
@@ -509,7 +531,80 @@ controller use).
   handle_midi_event calls) plus pre-run-config renders — the renderer has
   no mid-run config mechanism (deliberately: no MIDI semantics invented).
 - Startup log line: `Synth layers: coupler=off sub_octave=off (ch15=note+12
-  CC7=60, ch14=note-12 CC7=40)`.
+  CC7=60, ch14=note-12 CC7=40)`, followed since Phase 5 by
+  `Synth drone: off (ch13 CC7=45 vel=100)`.
+
+## Drone (unpika) + config-key registry (Phase 5, 2026-09-19)
+
+A drone is a **fixture**: sustained notes that sound continuously under the
+melody, like a real harmonium's drone knobs. They are NOT phrase keys — they
+never enter the bellows model (`held_notes_` / `reference_velocity_` are
+untouched by drone state, and drone voices are invisible to the duplicate
+NoteOn / baton-pass logic).
+
+**Channel 13.** The drone lives on internal FluidSynth channel 13 — the
+descending reservation is now 15 coupler, 14 sub-octave, 13 drone. It plays
+the current `stop` preset (`apply_stop()` loops all channels, so a stop
+change re-programmes ch13 too; the drone's CC 7 gain is re-asserted
+alongside the layer gains). **Channels 13/14/15 are all RESERVED**: MIDI
+input on ch13 collides with drone voices (same caveat as 14/15).
+
+**`drone` config key.** `"off"` (default) or 1–8 comma-separated MIDI note
+numbers, e.g. `"48,55"` (Sa+Pa). Strict parsing: digits only — no
+whitespace, signs, floats, empty tokens or duplicate notes; more than 8
+notes is rejected outright (a real harmonium has a handful of drone knobs);
+`""` normalizes to `"off"`; junk → `PLUGIN_INVALID_PARAM` with state
+unchanged. Sargam-name parsing ("Sa", "Pa") is future work. Live semantics:
+the new spec is diffed against the **actually sounding** notes — added
+notes start immediately, removed notes release with the natural
+`release_ms` tail, unchanged notes keep sounding (no re-trigger). Diffing
+against sounding state (not the stored string) also gives the CC 123
+restart semantics below.
+
+**`drone_level` config key.** Integer 0–127 → CC 7 on channel 13, live.
+Default **45** — between sub-octave (40) and coupler (60). Measured balance
+(see tests/RESULTS.md Phase 5): drone fundamentals −59.5…−60.8 dBFS vs the
+melody fundamental line at −45.3…−45.9 dBFS → the drone sits **≈11–14 dB
+under the melody** (11 dB with both drone notes power-summed, 14 dB
+per-voice); melody lines are bit-identical with the drone on/off, so
+nothing is masked. 45 kept as the final default.
+
+**Velocity.** Drone voices start at a FIXED velocity 100
+(`kDroneVelocity`); loudness comes solely from CC 7. Drone notes never
+interact with the bellows model, never touch `reference_velocity_`, and
+duplicate/no-op NoteOn semantics don't apply. State is a separate container
+(`std::vector<uint8_t> drone_notes_`), not `held_notes_`.
+
+**CC 123 = full reset.** The hardened handler already ran `all_notes_off`
+on all 16 channels (covering ch13); Phase 5 additionally clears
+`drone_notes_`. The stored `drone` spec is KEPT in config (a MIDI event
+doesn't rewrite config), so re-issuing the same value restarts the notes —
+verified in the config harness (audible restart mid-render is impossible:
+the renderer has no mid-run config mechanism, deliberately).
+
+**No mirroring.** Pitch bend and CC 11 are mirrored to the coupler/sub
+layers (Phase 4) but deliberately NOT to the drone channel: a real drone
+knob is independent of the keyboard, so bend/expression must not wobble the
+drone. CC 7 was never mirrored anywhere (it IS the drone's gain knob on
+ch13).
+
+**Verification** (objective numbers in tests/RESULTS.md Phase 5): T12
+melody-over-drone renders (`drone=48,55` vs `drone=off`) — constant drone
+lines at 139.5/207.5 Hz THROUGHOUT the on-render (phrase windows AND the
+6 s drone-only tail), absent in the off render (noise floor / digital
+silence); melody lines bit-identical; drone+`stop=double` render shows the
+detune beat on the drone lines too (resolved pair 207.50/208.00 Hz = 0.50 Hz
+beat on note 55; merged hump on note 48, its 0.32 Hz beat is below the
+window's resolution). T13 — drone + melody + CC 123: everything hits the
+s16 floor (−90.3 dBFS) after CC 123 and the synth still plays afterwards.
+Log line: `Synth drone: <spec> (ch13 CC7=<level> vel=100)`.
+
+**Config-key registry.** Every `set_config`/`get_config` key (Phases 1–5:
+`soundfont_path`, `audio_driver`, `gain`, `reverb`, `chorus`, `attack_ms`,
+`release_ms`, `stop`, `coupler`, `sub_octave`, `drone`, `drone_level`) is
+now documented authoritatively in **docs/HARMONIUM_CONFIG.md** —
+type/format, default, valid range, when it applies, `get_config` echo,
+invalid-input behavior, and the backing FluidSynth mechanism.
 
 ## Harmonium realism test harness (Phase 0, 2026-09-18)
 
@@ -570,20 +665,25 @@ To clear a stuck note in a live instance:
   see "Uniform Bellows Velocity" above; octave coupler + sub-octave
   layers ARE implemented — see "Layer router (Phase 4)"; bellows
   pressure/expression modeling beyond CC#11 mirroring is still future work.)
-- **MIDI channels 14/15 are reserved** by the layer router; MIDI input
-  arriving on them from a controller would collide with layer voices.
+- **MIDI channels 13/14/15 are reserved** by the layer router and drone;
+  MIDI input arriving on them from a controller would collide with
+  layer/drone voices.
 
 ## Suggested next steps
 
-1. **Harmonium realism Phases 5+** (active effort — Phases 0–4 complete):
-   - Phase 5: drone (unpika) + config-key registry doc
+1. **Harmonium realism Phases 6+** (active effort — Phases 0–5 complete):
+   - Phase 6: key-click/chiff + micro-variation (per-note timing/level
+     humanization)
+   - Drone polish (open): sargam-name parsing for `drone` ("Sa,Pa" →
+     48,55 etc., needs a tonic offset decision); optional gentle chorus/
+     detune dedicated to the drone channel
    - Phase 7 (envelope work can't fix this): high-register stretch — keys
      65–84 are one F4 sample stretched up to +19 semitones; needs new samples
    - Optional Phase 3 polish: `four` stop (2 unison + octave pair) in the
      derived font if the coupler doesn't cover it; raise D at the low end
      (note 43's beat 0.24 Hz is at the slow edge); live `stop` switching
      via capture_live.sh (needs a config plumb)
-    - Reference clips still pending (yt-dlp/sox not installable non-interactively)
+     - Reference clips still pending (yt-dlp/sox not installable non-interactively)
 2. **Multiple plugin support in CLI**: accept several `--plugin` flags or a
    plugin directory; route MIDI to all loaded plugins (PluginManager already
    fans out).

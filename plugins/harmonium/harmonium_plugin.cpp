@@ -2,6 +2,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 
@@ -131,6 +132,17 @@ PluginResult HarmoniumPlugin::init(const char* audio_driver) {
               << ", ch" << kSubOctaveChannel << "=note-12 CC7="
               << kSubOctaveCC7 << ")" << std::endl;
 
+    // Drone (Phase 5): channel 13 carries the drone fixture on the same
+    // stop preset (apply_stop() above already programmed it). Set its
+    // gain first, then start the configured drone notes (they sound
+    // until the spec changes or CC 123 clears them).
+    apply_drone_level();
+    apply_drone_spec();
+    std::cout << "Synth drone: " << drone_spec_
+              << " (ch" << kDroneChannel << " CC7=" << drone_level_
+              << " vel=" << static_cast<int>(kDroneVelocity) << ")"
+              << std::endl;
+
     return PLUGIN_OK;
 }
 
@@ -224,6 +236,98 @@ void HarmoniumPlugin::apply_coupler_detune() {
                                         pitch.data(), 0) == 0) {
         fluid_synth_activate_tuning(synth_, kCouplerChannel, 0, 0, 0);
     }
+}
+
+bool HarmoniumPlugin::parse_drone_spec(const std::string& value,
+                                       std::vector<uint8_t>& out) {
+    out.clear();
+    if (value == "off" || value.empty()) {
+        return true;  // empty string = off (canonicalized by the caller)
+    }
+    // Comma-separated note numbers, strict: digits only (no whitespace,
+    // signs or floats — same strictness as the other config keys), each
+    // 0-127, no duplicates, at most kDroneMaxNotes notes. Sargam-name
+    // parsing ("Sa", "Pa") is future work.
+    size_t pos = 0;
+    while (true) {
+        const size_t comma = value.find(',', pos);
+        const std::string token =
+            value.substr(pos, comma == std::string::npos
+                                  ? std::string::npos : comma - pos);
+        if (token.empty() ||
+            token.find_first_not_of("0123456789") != std::string::npos) {
+            return false;
+        }
+        errno = 0;
+        char* end = nullptr;
+        const unsigned long n = std::strtoul(token.c_str(), &end, 10);
+        if (errno != 0 || end != token.c_str() + token.size() || n > 127) {
+            return false;
+        }
+        if (out.size() >= kDroneMaxNotes ||
+            std::find(out.begin(), out.end(),
+                      static_cast<uint8_t>(n)) != out.end()) {
+            return false;  // more than kDroneMaxNotes notes, or duplicate
+        }
+        out.push_back(static_cast<uint8_t>(n));
+        if (comma == std::string::npos) {
+            break;
+        }
+        pos = comma + 1;
+    }
+    return true;
+}
+
+void HarmoniumPlugin::start_drone_note(uint8_t note) {
+    if (!synth_) {
+        return;
+    }
+    if (fluid_synth_noteon(synth_, kDroneChannel, note, kDroneVelocity) != 0) {
+        // No font zone for this note (or voice overflow): don't record
+        // it, so the release path stays a no-op — same policy as the
+        // layer router's failed noteons.
+        std::cerr << "Drone note failed to start: note="
+                  << static_cast<int>(note) << std::endl;
+        return;
+    }
+    drone_notes_.push_back(note);
+}
+
+void HarmoniumPlugin::apply_drone_spec() {
+    if (!synth_ || soundfont_id_ < 0) {
+        return;
+    }
+    std::vector<uint8_t> wanted;
+    if (!parse_drone_spec(drone_spec_, wanted)) {
+        return;  // defensive: the stored spec is always valid
+    }
+    // Release sounding notes that are no longer wanted (fluid_synth_
+    // noteoff → natural release_ms tail); start wanted notes that are
+    // not sounding; unchanged notes are left untouched (no re-trigger).
+    for (auto it = drone_notes_.begin(); it != drone_notes_.end();) {
+        if (std::find(wanted.begin(), wanted.end(), *it) == wanted.end()) {
+            fluid_synth_noteoff(synth_, kDroneChannel, *it);
+            it = drone_notes_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (const uint8_t note : wanted) {
+        if (std::find(drone_notes_.begin(), drone_notes_.end(), note)
+                == drone_notes_.end()) {
+            start_drone_note(note);
+        }
+    }
+}
+
+void HarmoniumPlugin::apply_drone_level() {
+    if (!synth_) {
+        return;
+    }
+    // CC 7 on channel 13 IS the drone's gain knob (never mirrored from
+    // MIDI input, like the layer gains on channels 14/15).
+    fluid_synth_cc(synth_, kDroneChannel, 7,
+                   static_cast<uint8_t>(drone_level_));
 }
 
 PluginResult HarmoniumPlugin::start_audio() {
@@ -389,11 +493,17 @@ PluginResult HarmoniumPlugin::handle_midi_event(const MidiEvent& event) {
         case MidiEvent::CONTROL_CHANGE: {
             // All Notes Off: reset bellows state (stuck-note insurance)
             // and silence ALL 16 channels — CC 123 sent to one channel
-            // only clears that channel's voices, and layer voices live on
-            // internal channels the sender knows nothing about.
+            // only clears that channel's voices, and layer/drone voices
+            // live on internal channels the sender knows nothing about.
+            // CC 123 is a FULL reset: the drone's sounding-note container
+            // is cleared too (its all_notes_off below covers channel 13),
+            // while the stored "drone" spec is kept — re-issuing the same
+            // value restarts the notes (the start/stop diff runs against
+            // the sounding state, see apply_drone_spec).
             if (event.data1 == 123) {
                 held_notes_.clear();
                 reference_velocity_ = 0;
+                drone_notes_.clear();
                 const int midi_channels = fluid_synth_count_midi_channels(synth_);
                 for (int ch = 0; ch < midi_channels; ++ch) {
                     fluid_synth_all_notes_off(synth_, ch);
@@ -494,6 +604,12 @@ std::string HarmoniumPlugin::get_config(const char* key) {
     }
     if (k == "sub_octave") {
         return sub_octave_on_ ? "on" : "off";
+    }
+    if (k == "drone") {
+        return drone_spec_;
+    }
+    if (k == "drone_level") {
+        return std::to_string(drone_level_);
     }
 
     return "";
@@ -596,6 +712,10 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
         if (synth_ && soundfont_id_ >= 0) {
             apply_stop();
             apply_layer_gains();
+            // The drone channel plays the stop preset too (apply_stop
+            // loops all channels); re-assert its gain alongside the
+            // layer gains in case anything reset it with the preset.
+            apply_drone_level();
         }
         return PLUGIN_OK;
     }
@@ -623,6 +743,39 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
             set_layer_for_all_held(is_coupler ? kLayerCoupler
                                               : kLayerSubOctave,
                                    on);
+        }
+        return PLUGIN_OK;
+    }
+
+    // Drone (Phase 5): fixture notes on internal channel 13. Live
+    // semantics: newly added notes start immediately (fixed drone
+    // velocity — loudness is the drone_level CC 7 gain), removed notes
+    // release with the natural release_ms tail, unchanged notes keep
+    // sounding without re-trigger. Drone voices never touch the bellows
+    // model (no held_notes_ / reference_velocity_ interaction).
+    if (k == "drone") {
+        std::vector<uint8_t> wanted;
+        if (!parse_drone_spec(value, wanted)) {
+            return PLUGIN_INVALID_PARAM;
+        }
+        // Canonical echo: "" normalizes to "off".
+        drone_spec_ = wanted.empty() ? "off" : value;
+        if (synth_ && soundfont_id_ >= 0) {
+            apply_drone_spec();
+        }
+        return PLUGIN_OK;
+    }
+
+    if (k == "drone_level") {
+        std::string v = value;
+        char* end = nullptr;
+        long level = std::strtol(v.c_str(), &end, 10);
+        if (end == v.c_str() || *end != '\0' || !(level >= 0 && level <= 127)) {
+            return PLUGIN_INVALID_PARAM;
+        }
+        drone_level_ = static_cast<int>(level);
+        if (synth_) {
+            apply_drone_level();
         }
         return PLUGIN_OK;
     }

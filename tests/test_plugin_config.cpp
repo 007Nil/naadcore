@@ -382,6 +382,154 @@ int main(int argc, char** argv) {
     check_result("cc123: note off after cc123", p->handle_midi_event(ev),
                  naadcore::PLUGIN_OK);
 
+    // ---- Phase 5: drone (fixture notes on internal channel 13) ----
+    // Headless: start/stop of the drone voices is verified audibly with
+    // plugin-in-loop renders (tests/RESULTS.md Phase 5); here we check
+    // the config seam, the add/remove diff semantics (no errors, correct
+    // readback, melody notes unaffected) and the CC 123 reset.
+
+    // defaults
+    check_eq("default drone", p->get_config("drone"), "off");
+    check_eq("default drone_level", p->get_config("drone_level"), "45");
+
+    // valid set/get: drone notes start immediately, melody above them
+    // must keep working (drone never touches the bellows model)
+    check_result("drone set 48,55", p->set_config("drone", "48,55"),
+                 naadcore::PLUGIN_OK);
+    check_eq("drone reads 48,55", p->get_config("drone"), "48,55");
+    ev.type = naadcore::MidiEvent::NOTE_ON;
+    ev.channel = 0;
+    ev.data1 = 69;
+    ev.data2 = 100;
+    check_result("drone: melody note over drone", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::NOTE_OFF;
+    check_result("drone: melody note off", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+
+    // add/remove semantics: "48,60" releases 55, starts 60, keeps 48
+    // (state-level: no errors + readback; audible proof via T12 renders)
+    check_result("drone 48,60 (release 55, start 60, keep 48)",
+                 p->set_config("drone", "48,60"), naadcore::PLUGIN_OK);
+    check_eq("drone reads 48,60", p->get_config("drone"), "48,60");
+    // full stop: everything releases
+    check_result("drone off", p->set_config("drone", "off"),
+                 naadcore::PLUGIN_OK);
+    check_eq("drone reads off", p->get_config("drone"), "off");
+
+    // empty string = off (canonical echo)
+    check_result("drone set 48", p->set_config("drone", "48"),
+                 naadcore::PLUGIN_OK);
+    check_result("drone empty string = off", p->set_config("drone", ""),
+                 naadcore::PLUGIN_OK);
+    check_eq("drone empty reads off", p->get_config("drone"), "off");
+
+    // boundary values accepted
+    check_result("drone note 0 ok", p->set_config("drone", "0"),
+                 naadcore::PLUGIN_OK);
+    check_eq("drone note 0 reads", p->get_config("drone"), "0");
+    check_result("drone note 127 ok", p->set_config("drone", "127"),
+                 naadcore::PLUGIN_OK);
+    check_eq("drone note 127 reads", p->get_config("drone"), "127");
+    check_result("drone 8 notes ok (cap)",
+                 p->set_config("drone", "48,50,52,55,57,59,60,62"),
+                 naadcore::PLUGIN_OK);
+    check_eq("drone 8 notes reads", p->get_config("drone"),
+             "48,50,52,55,57,59,60,62");
+    check_result("drone off again", p->set_config("drone", "off"),
+                 naadcore::PLUGIN_OK);
+
+    // strict validation: junk / range / format rejects leave state alone
+    check_result("drone sargam names rejected", p->set_config("drone", "sa,pa"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone 128 out of range", p->set_config("drone", "128"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone negative rejected", p->set_config("drone", "-1"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone float token rejected", p->set_config("drone", "48.5"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone trailing comma rejected", p->set_config("drone", "48,"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone leading comma rejected", p->set_config("drone", ",48"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone empty token rejected",
+                 p->set_config("drone", "48,,55"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone leading space rejected", p->set_config("drone", " 48"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone trailing space rejected", p->set_config("drone", "48 "),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone inner space rejected",
+                 p->set_config("drone", "48, 55"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone case-sensitive off rejected",
+                 p->set_config("drone", "OFF"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone keyword on rejected", p->set_config("drone", "on"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone overflow token rejected",
+                 p->set_config("drone", "99999999999999999999999"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone duplicate note rejected",
+                 p->set_config("drone", "48,48"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone 9 notes rejected",
+                 p->set_config("drone", "36,40,43,45,48,50,52,55,57"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_eq("drone unchanged after rejects", p->get_config("drone"), "off");
+
+    // drone_level: 0..127 -> CC 7 on channel 13, live
+    check_result("drone_level 60", p->set_config("drone_level", "60"),
+                 naadcore::PLUGIN_OK);
+    check_eq("drone_level reads 60", p->get_config("drone_level"), "60");
+    check_result("drone_level 0 ok", p->set_config("drone_level", "0"),
+                 naadcore::PLUGIN_OK);
+    check_result("drone_level 127 ok", p->set_config("drone_level", "127"),
+                 naadcore::PLUGIN_OK);
+    check_eq("drone_level reads 127", p->get_config("drone_level"), "127");
+    check_result("drone_level 128 rejected",
+                 p->set_config("drone_level", "128"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone_level negative rejected",
+                 p->set_config("drone_level", "-1"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone_level junk rejected",
+                 p->set_config("drone_level", "loud"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone_level float rejected",
+                 p->set_config("drone_level", "12.5"),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone_level empty rejected",
+                 p->set_config("drone_level", ""),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_result("drone_level trailing space rejected",
+                 p->set_config("drone_level", "45 "),
+                 naadcore::PLUGIN_INVALID_PARAM);
+    check_eq("drone_level unchanged after rejects",
+             p->get_config("drone_level"), "127");
+    check_result("drone_level restore 45", p->set_config("drone_level", "45"),
+                 naadcore::PLUGIN_OK);
+
+    // CC 123 is a full reset including the drone: voices silenced (all_
+    // notes_off covers channel 13), spec kept in config, and re-issuing
+    // the SAME spec restarts the notes (diff runs against sounding state)
+    check_result("drone cc123: set 48,55", p->set_config("drone", "48,55"),
+                 naadcore::PLUGIN_OK);
+    ev.type = naadcore::MidiEvent::CONTROL_CHANGE;
+    ev.channel = 0;
+    ev.data1 = 123;
+    ev.data2 = 0;
+    check_result("drone cc123: all notes off", p->handle_midi_event(ev),
+                 naadcore::PLUGIN_OK);
+    check_eq("drone cc123: spec kept in config", p->get_config("drone"),
+             "48,55");
+    check_result("drone cc123: restart same spec",
+                 p->set_config("drone", "48,55"), naadcore::PLUGIN_OK);
+    check_eq("drone cc123: reads after restart", p->get_config("drone"),
+             "48,55");
+    check_result("drone cc123: off after restart", p->set_config("drone", "off"),
+                 naadcore::PLUGIN_OK);
+
     p->stop_audio();
     destroy(p);
 
@@ -405,6 +553,13 @@ int main(int argc, char** argv) {
     check_eq("pre-init coupler stored", q->get_config("coupler"), "on");
     check_eq("pre-init sub_octave stored", q->get_config("sub_octave"),
              "on");
+    check_result("pre-init drone 48,55", q->set_config("drone", "48,55"),
+                 naadcore::PLUGIN_OK);
+    check_result("pre-init drone_level 50", q->set_config("drone_level", "50"),
+                 naadcore::PLUGIN_OK);
+    check_eq("pre-init drone stored", q->get_config("drone"), "48,55");
+    check_eq("pre-init drone_level stored", q->get_config("drone_level"),
+             "50");
     check_result("q init", q->init(nullptr), naadcore::PLUGIN_OK);
     check_eq("pre-init gain applied", q->get_config("gain"), "2.500");
     check_eq("pre-init reverb applied", q->get_config("reverb"), "off");
@@ -415,6 +570,18 @@ int main(int argc, char** argv) {
     check_eq("pre-init coupler applied", q->get_config("coupler"), "on");
     check_eq("pre-init sub_octave applied", q->get_config("sub_octave"),
              "on");
+    check_eq("pre-init drone applied", q->get_config("drone"), "48,55");
+    check_eq("pre-init drone_level applied", q->get_config("drone_level"),
+             "50");
+    // live drone changes after a pre-init config: remove 55, then off
+    check_result("pre-init drone live trim", q->set_config("drone", "48"),
+                 naadcore::PLUGIN_OK);
+    check_eq("pre-init drone live trim reads", q->get_config("drone"), "48");
+    check_result("pre-init drone live off", q->set_config("drone", "off"),
+                 naadcore::PLUGIN_OK);
+    check_eq("pre-init drone live off reads", q->get_config("drone"), "off");
+    check_result("pre-init drone_level live", q->set_config("drone_level", "45"),
+                 naadcore::PLUGIN_OK);
     // layers enabled from init: a note must start main + both layers and
     // release them all (headless: PLUGIN_OK + layer state readback)
     naadcore::MidiEvent evq{};

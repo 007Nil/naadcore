@@ -60,7 +60,10 @@ naadcore/
      ("small room": roomsize 0.2 / damp 0.0 / width 0.3 / level 0.4),
      chorus off, 4th-order interpolation; live config keys `gain`, `reverb`,
      `chorus` via `set_config`/`get_config` (see `HANDOVER.md`)
-   - SoundFont structure audited: see `docs/HARMONIUM_SF2_AUDIT.md`
+    - SoundFont structure audited: see `docs/HARMONIUM_SF2_AUDIT.md`
+    - Config keys documented authoritatively (Phases 1–5: gain/reverb/
+      chorus, attack_ms/release_ms, stop, coupler/sub_octave, drone/
+      drone_level): see `docs/HARMONIUM_CONFIG.md`
 
 6. **NaadCoreCLI** (`apps/naadcore-cli/main.cpp`)
    - Parses `--plugin`, `--midi`, `--audio-driver`, `--help`
@@ -214,7 +217,7 @@ legato, chords, staccato, drone, repertoire phrase, velocity sweep), offline
 FluidSynth rendering, live capture through the full CLI → plugin → audio
 chain (PipeWire `parecord --monitor-stream` on this machine), objective WAV
 analysis (`tests/analyze.py`), and an A/B score sheet (`tests/RESULTS.md`).
-Config-seam unit tests: `tests/scripts/run_config_tests.sh` (43 checks).
+Config-seam unit tests: `tests/scripts/run_config_tests.sh` (213 checks).
 
 ### Verify Build
 

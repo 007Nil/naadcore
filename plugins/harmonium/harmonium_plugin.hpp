@@ -94,6 +94,40 @@ private:
     bool coupler_on_ = false;
     bool sub_octave_on_ = false;
 
+    // Drone (Phase 5). A drone is a FIXTURE: sustained notes that sound
+    // continuously under the melody, like a real harmonium's drone knobs —
+    // they are NOT phrase keys. The drone lives on internal channel 13
+    // (descending reservation: 15 coupler, 14 sub-octave, 13 drone), plays
+    // the current stop preset (apply_stop() covers it), and never touches
+    // the bellows model: drone voices are not in held_notes_, never read
+    // or write reference_velocity_, and start at a FIXED velocity —
+    // loudness comes solely from the CC 7 gain below (drone_level key).
+    // Pitch bend and CC 11 are deliberately NOT mirrored to channel 13
+    // (a drone knob is independent of the keyboard, unlike the coupler/
+    // sub layers which track the keys). Channel 13 is RESERVED like
+    // 14/15: MIDI input arriving on it collides with drone voices.
+    static constexpr int kDroneChannel = 13;
+    /// Fixed note-on velocity for drone voices (velocity is NOT the
+    /// drone's volume control; the CC 7 gain is).
+    static constexpr uint8_t kDroneVelocity = 100;
+    /// Maximum number of simultaneous drone notes the "drone" key
+    /// accepts (a real harmonium has a handful of drone knobs); a spec
+    /// with more tokens is rejected outright.
+    static constexpr size_t kDroneMaxNotes = 8;
+    /// Default drone gain (CC 7 on channel 13), between the sub-octave
+    /// (40) and coupler (60) layer gains. Tuned against plugin-in-loop
+    /// renders so the drone sits clearly under the melody (see
+    /// HANDOVER.md "Drone" for the measured margin).
+    static constexpr int kDroneCC7 = 45;
+
+    /// Canonical "drone" config echo: "off" or the accepted note list.
+    std::string drone_spec_ = "off";
+    /// Notes currently sounding on channel 13 (CC 123 clears this; the
+    /// stored spec is kept, so re-issuing the same value restarts them).
+    std::vector<uint8_t> drone_notes_;
+    /// 0..127, sent as CC 7 on channel 13 (drone_level key).
+    int drone_level_ = kDroneCC7;
+
     // Uniform bellows velocity: a real harmonium's bellows drive all open
     // reeds at the same pressure, so keys pressed together sound at the
     // first key's velocity. Each held key remembers its original press
@@ -151,6 +185,32 @@ private:
     /// only (once at init; tunings survive program changes). Silent no-op
     /// if the synth is not ready or the API call fails.
     void apply_coupler_detune();
+
+    /// Validate + parse a "drone" value into note numbers. "off" and ""
+    /// both parse to an empty list; anything else must be a comma-
+    /// separated list of integers 0-127 (strict: digits only — no
+    /// whitespace, signs, floats, empty tokens or duplicate notes; at
+    /// most kDroneMaxNotes notes). Returns false on invalid input
+    /// (caller replies PLUGIN_INVALID_PARAM and keeps the old spec).
+    static bool parse_drone_spec(const std::string& value,
+                                 std::vector<uint8_t>& out);
+
+    /// Start one drone voice on channel 13 at the fixed drone velocity
+    /// and record it in drone_notes_. A failed noteon (no font zone for
+    /// the note) is logged and NOT recorded.
+    void start_drone_note(uint8_t note);
+
+    /// Reconcile the sounding drone voices (drone_notes_) with the
+    /// stored spec: newly added notes start immediately, removed notes
+    /// release (natural release_ms tail), unchanged notes keep sounding
+    /// without re-trigger. The diff runs against the SOUNDING state, so
+    /// after CC 123 re-issuing the same spec restarts every note.
+    /// No-op before the synth + SoundFont are ready (init applies it).
+    void apply_drone_spec();
+
+    /// Send drone_level_ as CC 7 on channel 13 — the drone's gain knob
+    /// (no-op before init; called at init and on live changes).
+    void apply_drone_level();
 };
 
 } // namespace naadcore

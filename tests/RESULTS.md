@@ -404,6 +404,97 @@ semantics in the harness).
 
 Renders: `tests/renders/p4_*.wav` (gitignored).
 
+## Phase 5: drone (unpika) + config registry (2026-09-19)
+
+Drone = fixture notes on internal channel 13 (`drone` / `drone_level`
+config keys), fixed velocity 100, loudness via CC 7, no bellows-model
+interaction, no bend/CC11 mirroring; CC 123 clears it. Registry doc:
+docs/HARMONIUM_CONFIG.md. All renders below are **plugin-in-loop**
+(`run_render_plugin.sh`), font = harmonium_v2.sf2, default voicing.
+T12 = melody phrases (69/71/69/69/67/69 @100, 0.7–14.8 s) over a drone
+sounding the whole track; the 7 s render tail gives a 15.5–21.5 s
+drone-only window.
+
+**Method — carrier-line FFT.** Hanning-windowed raw-waveform FFT of the
+segment, line amplitude reported at the font's pitch for each note
+(drone 48 → 139.5 Hz, drone 55 → 207.5 Hz, melody 69 → 465.5 Hz, 71 →
+522.0 Hz; font plays ~1 semitone sharp — pre-existing). Noise floor =
+mean amplitude 5–10 Hz off the line.
+
+### T12: drone presence, level, and melody untouched
+
+Drone-on render (`drone=48,55`, default `drone_level=45`) vs drone-off:
+
+| Line | window | drone on | drone off |
+|---|---|---|---|
+| drone 48 f0 (139.5 Hz) | phrase 1 (1.0–2.3 s) | −59.5 dBFS | −107.2 (noise) |
+| drone 48 f0 | phrase 3 (5.9–7.2 s) | −60.2 | −102.3 (noise) |
+| drone 48 f0 | phrase 6 (13.4–14.7 s) | −60.2 | −106.4 (noise) |
+| drone 48 f0 | tail (15.5–21.5 s) | −60.1 | −240 (digital silence) |
+| drone 55 f0 (207.5 Hz) | phrase 1 | −60.3 | −109.7 (noise) |
+| drone 55 f0 | tail | −60.7 | −240 |
+| melody 69 f0 (465.5 Hz) | phrase 1 | **−45.9** | **−45.9** |
+| melody 69 f0 | phrase 6 | **−45.9** | **−45.9** |
+| melody 71 f0 (522.0 Hz) | phrase 3 (5.7–7.3 s) | **−45.3** | **−45.3** |
+
+- **Present throughout:** the drone lines sit at −59.5…−60.8 dBFS in every
+  window of the on-render (first phrase to the tail, drift < 1.3 dB —
+  fixture behavior), and are at the noise floor / digital silence in the
+  off-render.
+- **Melody unchanged:** the melody fundamental lines are IDENTICAL to the
+  reported resolution (−45.9/−45.9, −45.9/−45.9, −45.3/−45.3) between the
+  two renders — the drone never touches melody voices or the bellows model.
+  Global stats: peak −24.0 (on) vs −26.1 dBFS (off), RMS −37.1 vs −37.6 —
+  the +2.1 dB peak is ordinary waveform summing, not a gain interaction.
+- **Level vs melody (the drone_level default decision):** drone
+  fundamentals ≈ −60 dBFS vs melody fundamental ≈ −45.6 dBFS → **−14.4 dB
+  per drone voice, −11.4 dB with both drone notes power-summed** — clearly
+  under the melody at typical levels, no masking (melody lines identical).
+  Default `drone_level=45` kept (CC7=45 is 1.9 dB hotter than the
+  sub-octave's 40 but the drone's register sits a full octave-plus below
+  the melody line measured here).
+
+### T12 in the double stop (`stop=double drone=48,55`)
+
+The drone channel plays the double preset too. Drone-only tail, carrier
+lines: note 55 resolves the detuned pair **207.50 / 208.00 Hz** (0.50 Hz
+beat; expected 0.48 Hz at +4¢) and note 48 shows the merged hump at
+139.3–139.9 Hz (its 0.32 Hz beat is ~2 bins at the 6 s window's 0.167 Hz
+resolution — widened plateau vs single's single-bin peak). No errors, no
+voice-overflow messages.
+
+### T13: drone + CC 123 (`drone=48,55`)
+
+Melody 69 (0.5–2.5 s) over the drone; CC 123 at 3.0 s; note 72 at 5.0–7.0 s:
+
+| Window | RMS |
+|---|---|
+| melody+drone hold (1.0–2.4 s) | −33.7 dBFS |
+| **post-CC123 (3.4–4.8 s)** | **−90.3 dBFS (s16 floor)** |
+| note 72 after reset (5.4–6.8 s) | −36.1 dBFS |
+| after note 72 off (7.4–8.8 s) | −90.3 dBFS (floor) |
+
+The drone is included in the reset (old one-channel CC 123 would have left
+ch13 droning forever), and the synth still plays afterwards. Restarting the
+drone after CC 123 needs a config change (the renderer can't do that
+mid-run, deliberately) — verified at state level in the config harness
+(re-issuing the same `drone=48,55` restarts the notes).
+
+### Config tests / build / smoke
+
+- `run_config_tests.sh`: **213/213** checks (was 147; +66 for the
+  `drone`/`drone_level` keys — defaults, valid set/get, boundary notes
+  0/127, 8-note cap, add/remove/keep semantics at state level, empty-string
+  = off canonicalization, strict rejection (sargam junk, 128, negative,
+  float, empty/comma/space/duplicate tokens, 9 notes, overflow), CC 123
+  reset + same-spec restart, pre-init storage + apply + live changes).
+- Clean build (rm -rf build): **0 warnings** (-Wall -Wextra -Wpedantic).
+- Live CLI smoke (timeout 5): startup shows `Synth stop: single`,
+  `Synth layers: …` and the new `Synth drone: off (ch13 CC7=45 vel=100)`,
+  no errors, exit 124 (alive).
+
+Renders: `tests/renders/p5_*.wav` (gitignored).
+
 ## Listening notes
 
 (reference clips pending — see tests/README.md for the workflow)
@@ -435,3 +526,8 @@ Renders: `tests/renders/p4_*.wav` (gitignored).
   beat confirmed working. FluidSynth's `program_select` does not reset
   channel generators (release_ms=2000 tail-tracking proof) nor CC 7 (layer
   gains persist across stop changes).
+- Phase 5 (2026-09-19): the drone (ch13 fixture, CC7=45, fixed vel 100)
+  measures ≈11–14 dB under the melody fundamental line with melody lines
+  bit-identical on/off (no bellows/gain interaction); the double stop
+  applies to the drone channel too (0.50 Hz resolved beat on drone note
+  55); CC 123 takes the drone to the s16 floor along with everything else.

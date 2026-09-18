@@ -197,6 +197,7 @@ naadcore/
 - `docs/PLUGIN_DEVELOPMENT.md` — how to write a new plugin
 - `docs/PLUGIN_SYSTEM_IMPLEMENTATION.md` — plugin system implementation notes
 - `docs/HARMONIUM_SF2_AUDIT.md` — harmonium.sf2 structure audit
+- `docs/HARMONIUM_CONFIG.md` — harmonium plugin config-key registry
 - `docs/NAADCORE_MVP_CHALLENGE.md` — historical MVP record (completed)
 - `tests/README.md` — realism test harness (test tracks, renders, A/B workflow)
 

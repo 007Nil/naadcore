@@ -9,8 +9,9 @@ clips (tests/references/) are gitignored.
 ```
 tests/
 ├── midi/                  # 7 base test tracks (T1–T7, format 0,
-│                          #   120 BPM, ch 0) + T8–T11 Phase 3/4 probes
-│                          #   (T10/T11 via gen_probes_phase4.py) — in git
+│                          #   120 BPM, ch 0) + T8–T13 Phase 3/4/5 probes
+│                          #   (T10/T11 via gen_probes_phase4.py,
+│                          #   T12/T13 via gen_probes_phase5.py) — in git
 ├── scripts/
 │   ├── gen_midi.py        # regenerates tests/midi/ (pure stdlib, no mido)
 │   ├── render_sf2.sh      # offline FluidSynth render of a track
@@ -23,13 +24,16 @@ tests/
 │   │                      #   note segment (separates beat from in-sample AM)
 │   ├── gen_probes_phase4.py # Phase 4 probes: T10 (duplicate NoteOn),
 │   │                      #   T11 (multi-channel CC 123 + cross-ch off)
+│   ├── gen_probes_phase5.py # Phase 5 probes: T12 (drone feature),
+│   │                      #   T13 (drone + CC 123)
 │   ├── sf2_audit.py       # SF2 binary structure dump (Phase 1 audit)
 │   └── run_config_tests.sh# compiles+runs test_plugin_config.cpp (ad hoc,
 │                          #   not wired into the project CMake build)
 ├── analyze.py             # numpy WAV analysis (onset/release/AM/peak/RMS)
 ├── test_plugin_config.cpp # config-seam tests (gain/reverb/chorus +
 │                          #   attack_ms/release_ms + stop + coupler/
-│                          #   sub_octave live keys, 147 checks)
+│                          #   sub_octave + drone/drone_level live keys,
+│                          #   213 checks)
 ├── renders/               # rendered/captured WAVs (gitignored)
 ├── references/            # personal-use reference clips (gitignored)
 ├── RESULTS.md             # A/B score sheet + objective measurements
@@ -81,7 +85,8 @@ tests/scripts/capture_live.sh tests/midi/T1_single_note_envelope.mid
 python3 tests/analyze.py tests/renders/baseline_phase0_sf2_T1_single_note_envelope.wav
 python3 tests/analyze.py tests/renders/<capture>.wav <timing.txt>
 
-# 6. Config-seam unit tests (gain/reverb/chorus/attack_ms/release_ms/stop)
+# 6. Config-seam unit tests (all keys: gain/reverb/chorus/attack_ms/
+#    release_ms/stop/coupler/sub_octave/drone/drone_level)
 tests/scripts/run_config_tests.sh
 
 # 7. Offline render through the REAL plugin (no audio hardware needed;
@@ -230,6 +235,47 @@ Objective Phase 4 numbers and the measurement method (power-subtraction:
 layer power = P(on-render) − P(off-render) in matched mid-sustain windows)
 are in tests/RESULTS.md. WAV times include the renderer's 0.2 s lead-in.
 
+## Phase 5: drone probes (2026-09-19)
+
+Regenerate the two Phase 5 probe tracks with
+`python3 tests/scripts/gen_probes_phase5.py` (same hand-rolled format-0
+writer as gen_midi.py/gen_probes_phase4.py; committed tracks are in
+tests/midi/):
+
+| Track | Purpose |
+|---|---|
+| T12_drone_feature | melody phrases (note 69/71/67, gaps between) + a long tail — render twice (`drone=48,55` vs `drone=off`): drone lines must be present through the whole on-render and absent in the off render; melody lines must be identical |
+| T13_drone_cc123 | melody + drone + CC 123 at 3.0 s — everything (drone included) hits the noise floor after the CC 123; note 72 afterwards proves the synth still plays |
+
+Render + analyze (the drone itself is config — pass it to the renderer;
+a 7 s tail gives a ~6 s drone-only window at the end of T12):
+
+```bash
+tests/scripts/run_render_plugin.sh tests/midi/T12_drone_feature.mid \
+    tests/renders/p5_T12_drone_on.wav 7 drone=48,55
+tests/scripts/run_render_plugin.sh tests/midi/T12_drone_feature.mid \
+    tests/renders/p5_T12_drone_off.wav 7 drone=off
+tests/scripts/run_render_plugin.sh tests/midi/T13_drone_cc123.mid \
+    tests/renders/p5_T13.wav 2 drone=48,55
+python3 tests/analyze.py tests/renders/p5_T13.wav   # no segment between the CC123 and note 72
+```
+
+Drone usage examples (config keys, so also usable as renderer overrides):
+
+```bash
+# Sa+Pa drone under everything, slightly quieter than the default:
+tests/scripts/run_render_plugin.sh tests/midi/T6_repertoire_phrase.mid \
+    tests/renders/p5_T6_drone.wav 3 drone=48,55 drone_level=35
+# drone in the double-reed stop (drone voices use the double preset too):
+tests/scripts/run_render_plugin.sh tests/midi/T5_drone_plus_melody.mid \
+    tests/renders/p5_T5_drone_double.wav 3 drone=48,55 stop=double
+```
+
+Objective Phase 5 numbers (carrier-line FFT method, drone level vs melody,
+CC 123 floor) are in tests/RESULTS.md. Line-level measurement used ad-hoc
+numpy carrier-line FFTs (Hanning window, ±2 Hz line windows) on the raw
+waveform — the same technique as the Phase 3 beat table.
+
 
 ## Reference-clip workflow
 
@@ -263,7 +309,10 @@ Score reference vs old vs new per track in `tests/RESULTS.md`.
 | T9_beat_probe | (Phase 3) 6 s notes 43/60/79 for beat-rate measurement |
 | T10_duplicate_noteon | (Phase 4) duplicate NoteOn while held → no re-attack, one release tail |
 | T11_all_notes_off | (Phase 4) multi-channel CC 123 + cross-channel NoteOff → nothing stranded |
+| T12_drone_feature | (Phase 5) melody over a continuous drone + drone-only tail (drone=48,55 vs off comparison) |
+| T13_drone_cc123 | (Phase 5) drone + melody + CC 123 → everything to the floor, synth still alive |
 
-T8–T11 are hand-generated probe tracks (small inline Python writers, same
+T8–T13 are hand-generated probe tracks (small inline Python writers, same
 VLQ/format-0 technique as gen_midi.py; T10/T11 via
-`scripts/gen_probes_phase4.py`) — they are committed.
+`scripts/gen_probes_phase4.py`, T12/T13 via `scripts/gen_probes_phase5.py`)
+— they are committed.
