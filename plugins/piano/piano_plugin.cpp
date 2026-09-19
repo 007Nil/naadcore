@@ -102,6 +102,19 @@ PluginResult PianoPlugin::init(const char* audio_driver) {
     std::cout << "Synth voicing: gain=0.5 reverb=on chorus=off interp=4th-order"
               << std::endl;
 
+    // Soften the hammer transient (key-click/chiff) baked into the sample
+    // by increasing the volume-envelope attack time. The SF2 default is
+    // ~1 ms (GEN_VOLENVATTACK = -12000 timecents), which lets the hammer
+    // hit come through fully. A 10 ms ramp hides most of the transient
+    // while keeping the piano responsive.
+    //
+    // 10 ms = 1200 * log2(0.010) = -9466 timecents
+    // Offset to apply = -9466 - (-12000) = +2534 (additive per FluidSynth
+    // 2.4 — matches the harmonium plugin's approach).
+    for (int ch = 0; ch < midi_channels; ++ch) {
+        fluid_synth_set_gen(synth_, ch, GEN_VOLENVATTACK, 2534.0f);
+    }
+
     // Load SoundFont (embedded path)
     soundfont_id_ = load_soundfont();
     if (soundfont_id_ < 0) {
