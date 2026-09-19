@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""Generate the coupler acoustic-check probe track (format 0, ch 0, 120 BPM).
+"""Generate the coupler parity probe track (format 0, ch 0, 120 BPM).
 
 Same hand-rolled VLQ/format-0 technique as gen_midi.py and the Phase 3/4/5
 probe generators; the committed track lives in tests/midi/.
 
 Tracks:
-  T16_coupler_acoustic  single note 60 @ vel 100 held 0.5-3.5 s. Rendered
-                        twice by tests/scripts/check_coupler_acoustic.sh
-                        (coupler=off vs coupler=on pre-init); the analyzer
-                        asserts the octave-up voice (note+12 on ch 15) is
-                        AUDIBLE AT PARITY in the on-render: sustain power
-                        grows +1.5..+4.5 dB (two equal-power voices ~+3 dB),
-                        added power lives at the octave band (the 2026-09-19
-                        subsonic-tuning bug put it all below 260 Hz as an
-                        ~8 Hz rumble), and the ~4*f0 2nd-partial zone grows.
-                        Companion probe: T17_coupler_parity (per-note
-                        octave-vs-main parity; gen_probe_coupler_parity.py).
+  T17_coupler_parity  notes 48, 60, 72, 84 held 3 s each (1 s gaps), vel 100.
+                        Rendered twice by tests/scripts/check_coupler_parity.sh
+                        (coupler=off vs coupler=on pre-init). The consecutive
+                        pairs (48,60), (60,72), (72,84) are exactly the
+                        main-voice / octave-voice pairs of the representative
+                        notes 48/60/72: in the OFF render the fundamental line
+                        of note N+12 IS the level the coupler voice of note N
+                        reproduces at CC 7 = 100 (same preset, same channel
+                        volume, same velocity — parity by construction), so
+                        the OFF-render line comparison measures the octave-vs-
+                        main level without the spectral overlap of a coupled
+                        render. The ON/OFF power comparison measures what the
+                        coupler actually adds (tests/scripts/
+                        coupler_parity_measure.py prints both).
 """
 
 import os
@@ -69,21 +72,27 @@ def _vlq(value):
     return bytes(out)
 
 
-def t16_coupler_acoustic():
-    """One note 60 held 3 s — the coupler octave A/B probe."""
+# (on_time_s, off_time_s, note): 3 s holds, 1 s gaps, 4 segments.
+SEGMENTS = [(0.5, 3.5, 48), (4.5, 7.5, 60), (8.5, 11.5, 72),
+            (12.5, 15.5, 84)]
+
+
+def t17_coupler_parity():
+    """Notes 48/60/72/84 held 3 s each — the coupler parity probe."""
     tr = Track()
-    tr.note_on(0.5, 60, 100)
-    tr.note_off(3.5, 60)
-    return tr.build(5.0)
+    for on, off, note in SEGMENTS:
+        tr.note_on(on, note, 100)
+        tr.note_off(off, note)
+    return tr.build(17.0)
 
 
 def main():
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "..", "midi")
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, "T16_coupler_acoustic.mid")
+    path = os.path.join(out_dir, "T17_coupler_parity.mid")
     with open(path, "wb") as f:
-        f.write(t16_coupler_acoustic())
+        f.write(t17_coupler_parity())
     print("wrote", os.path.normpath(path))
 
 

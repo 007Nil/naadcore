@@ -742,6 +742,120 @@ held notes keep every voice started at their press until their NoteOff
 (`HeldNote.layers` bookkeeping). `sub_octave` keeps the Phase 4 retro
 semantics (out of scope). Config tests updated; 287/287 green.
 
+## Coupler parity alignment — same level as main, exactly +12 semitones (2026-09-20)
+
+**The complaint.** Even after the subsonic-tuning fix the user reported the
+coupler "doesn't work": pressing Sa did not read as Sa + Sa'. Render
+measurements confirmed the octave WAS present — but at **≈ −9 dB below the
+main voice** (`kCouplerCC7 = 60` on ch 15, plus a +3¢ detune shifting it
+off the exact octave). Two spec violations: (1) a separate level curve
+(the spec: "the original note and coupled note must receive the same
+velocity. Do not introduce a separate velocity curve for the Coupler"),
+(2) not exactly 12 semitones (the spec: "the octave difference is exactly
+12 MIDI semitones").
+
+**The change** (`plugins/harmonium/` only):
+- `kCouplerCC7` 60 → **100** — FluidSynth's default channel volume, the
+  same value the untouched main channels sit at. Combined with the note's
+  own `played_velocity`, the coupler voice is constructed IDENTICALLY to
+  the main voice of note+12: same preset, same channel gain, same
+  velocity. No separate level curve, parity by construction.
+- The +3¢ detune was REMOVED entirely: `apply_coupler_detune()`,
+  `kCouplerDetuneCents` and all MIDI-tuning calls deleted — the octave is
+  exactly +12 semitones, and with no tuning code left, the 2026-09-19
+  absolute-cents bug class is structurally impossible. (The 100·key+3 fix
+  from that day is thereby moot and was removed cleanly.)
+- Everything else unchanged: same played velocity for both voices,
+  per-press `HeldNote.layers` bookkeeping, new-presses-only toggle
+  semantics, N+12≤127 clamp, CC11/pitch-bend mirroring, ch 15 reservation.
+
+**Why CC 7 = 100 gives parity (measured).** Probe `tests/midi/T17_coupler_parity.mid`
+(notes 48/60/72/84 held 3 s each; generator
+`tests/scripts/gen_probe_coupler_parity.py`), rendered OFF/ON through the
+real plugin; measurements by `tests/scripts/coupler_parity_measure.py`:
+
+| Measurement | old build (CC7=60, +3¢) | parity build (CC7=100, exact) |
+|---|---|---|
+| added octave voice vs main, note 48 | −16.4 dB | **−0.22 dB** |
+| added octave voice vs main, note 60 | −9.11 dB | **−0.39 dB** |
+| added octave voice vs main, note 72 | −9.50 dB | **−1.19 dB** |
+| added octave voice vs main, note 84 (not gated) | −9.16 dB | −2.74 dB |
+
+(added-voice level = implied by the ON/OFF mid-sustain power growth:
+`10·log10(10^(presence/10) − 1)`; exact-octave spectral overlap makes
+coherent cross terms bias this by up to ~1 dB — the pair-line measurement
+below is the unbiased one.)
+
+The **pair-line measurement** (OFF render only, interference-free): the
+consecutive probe notes are octave pairs, and at CC7=100 the coupled
+octave of N is constructed identically to the main voice of N+12 — so the
+fundamental-line delta between them is the clean octave-vs-main level:
+
+| Pair (main → octave voice) | f(main) → f(octave) | line delta |
+|---|---|---|
+| 48 → 60 | 138.5 → 277.0 Hz | **−0.16 dB** |
+| 60 → 72 | 277.0 → 555.0 Hz | **−0.47 dB** |
+| 72 → 84 | 555.0 → 1111.0 Hz | **−1.30 dB** |
+
+Note 84's octave (note 96) sits at −2.7 dB: the font's top zone is a
+single F4 sample stretched up to +19 semitones (documented Phase 0
+finding) — pressing key 96 itself sounds equally thin; parity of
+construction holds regardless. The gate therefore asserts the
+representative notes 48/60/72.
+
+**T16 audibility gate re-derived** (`coupler_acoustic_assert.py`,
+note 60 OFF/ON renders, onset-relative windows):
+
+| Metric | old thresholds (CC7=60, +3¢) | old build | parity thresholds | parity build |
+|---|---|---|---|---|
+| sustain presence (ON vs OFF) | +0.15…+1.5 dB | +0.50 dB | **+1.5…+4.5 dB** | **+2.82 dB** |
+| added power below 1.4·f0 | ≤20% | 0.01% | ≤20% (unchanged) | 0.00% |
+| ≈4·f0 zone bins growing ≥6 dB | ≥3 | 20–21 (max +47) | ≥3 (unchanged) | **28 (max +51.8)** |
+
+Two equal-power voices give +3.0 dB presence; the +1.5 dB floor fails the
+old too-subtle CC7=60 build (+0.50 dB) and the subsonic-rumble build
+(+0.57 dB), the +4.5 dB ceiling fails a runaway layer. With the detune
+gone, the coupler's ≈4·f0 2nd partial lands on the main's weak 4th
+harmonic and the zone grows even more strongly than before (the old
+"+3¢ sideband cluster" trick is no longer needed). Verified FAIL cases:
+identical OFF/ON renders (presence +0.00, 0 bins) and the old CC7=60
+renders (presence +0.11 < 1.5, 54% of added power mis-placed low at note
+48 — its detuned octave destructively interfered with the main's 2nd
+harmonic, the −16 dB outlier above).
+
+**Permanent gates.** `check_coupler_acoustic.sh` now renders BOTH probes:
+T16 → `coupler_acoustic_assert.py` (audibility: parity presence band,
+octave-band placement, ≈4·f0 line growth) and T17 →
+`coupler_parity_measure.py --gate` (per-note parity: added voice within
+±2 dB of main at 48/60/72 + pair lines within ±2 dB). Wired into
+`tests/e2e_cli_coupler.sh` as Check 4.
+
+**Full-stack e2e (new Check 5).** The entire user chain in one pass:
+stdin `coupler on` → PluginManager → `set_config`, plus REAL ALSA
+NoteOn/NoteOff from a virtual source client (`tests/scripts/midi_poke.cpp`
+— a sequencer client with a READ/SUBS_READ port like a hardware keyboard;
+built ad hoc into the harness scratch dir) → CLI `--midi` subscription →
+PluginManager → plugin layer router → FluidSynth "file" render →
+`coupler_acoustic_assert.py` on the CLI-produced OFF/ON WAVs (onset-
+relative windows; the note lands at wall-clock-dependent positions).
+Measured on the parity build: **presence +2.82 dB — identical to the
+plugin-in-loop render**, i.e. nothing in the CLI/ALSA/routing chain
+attenuates the octave. Subscription-race note (proven during development):
+a note sent before the CLI's subscription is established renders as
+digital silence — the harness synchronizes on the CLI's "Listening for
+MIDI" line via the helper's `waitfile` command before injecting.
+
+**Config tests / build.** `run_config_tests.sh`: **287/287** (no seam-level
+assertions touched coupler level/detune — CC 7 and tuning are FluidSynth
+channel state, invisible at the config seam; the acoustic gates own
+them). Clean rebuild: **0 warnings**. `tests/e2e_cli_coupler.sh`: **ALL
+5 CHECKS PASSED**.
+
+**What the user hears now.** With `coupler on`, every new press sounds as
+the note plus its octave at the SAME loudness (within ~1 dB), exactly 12
+semitones up — no slow main-vs-octave beat (the +3¢ shimmer is gone by
+spec), a full octave-doubling harmonium coupler sound.
+
 ## Listening notes
 
 (reference clips pending — see tests/README.md for the workflow)

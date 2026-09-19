@@ -170,7 +170,6 @@ PluginResult HarmoniumPlugin::init(const char* audio_driver) {
     // and the order is simply harmless).
     apply_click_preset();
     apply_layer_gains();
-    apply_coupler_detune();
     std::cout << "Synth layers: coupler=" << (coupler_on_ ? "on" : "off")
               << " sub_octave=" << (sub_octave_on_ ? "on" : "off")
               << " (ch" << kCouplerChannel << "=note+12 CC7=" << kCouplerCC7
@@ -270,9 +269,11 @@ void HarmoniumPlugin::apply_layer_gains() {
     if (!synth_) {
         return;
     }
-    // The internal channels carry their layer at a fixed gain below the
-    // main voice; CC 7 events are never mirrored to them (see
-    // handle_midi_event), so these values stay the layer gain knob.
+    // The internal channels carry their layer at a fixed channel gain;
+    // CC 7 events are never mirrored to them (see handle_midi_event), so
+    // these values stay the layer gain knob. The coupler's value is
+    // FluidSynth's default channel volume (100) — parity with the main
+    // voice (same gain, same played velocity, exactly +12 semitones).
     fluid_synth_cc(synth_, kCouplerChannel, 7, kCouplerCC7);
     fluid_synth_cc(synth_, kSubOctaveChannel, 7, kSubOctaveCC7);
     // The click layer's fixed channel gain lives here too: apply_layer_
@@ -280,33 +281,6 @@ void HarmoniumPlugin::apply_layer_gains() {
     // at init and after every stop change.
     fluid_synth_cc(synth_, kClickChannel, 7,
                    static_cast<uint8_t>(kClickCC7));
-}
-
-void HarmoniumPlugin::apply_coupler_detune() {
-    if (!synth_) {
-        return;
-    }
-    // Optional subtle beat between the main voice and its octave coupler:
-    // raise the coupler channel +3 cents via the MIDI Tuning Standard API.
-    // Tunings live outside the SoundFont/preset namespace and survive
-    // program_select, so this is applied once at init. Failure is silent —
-    // the double-stop zones already provide shimmer (this is a bonus).
-    //
-    // fluid_synth_activate_key_tuning takes the ABSOLUTE pitch of each key
-    // in cents; the equal-temperament default for key k is 100*k (NOT a
-    // per-key offset). Bug fixed 2026-09-19: this array was built as a
-    // constant kCouplerDetuneCents, "tuning" every key to ~3 cents ≈ 8 Hz —
-    // every coupler voice became an inaudible subsonic rumble instead of
-    // the octave-up note (render A/B proof: tests/RESULTS.md, "Coupler
-    // acoustic check"). The +3 cents is the offset from the default pitch.
-    std::vector<double> pitch(128);
-    for (int key = 0; key < 128; ++key) {
-        pitch[key] = 100.0 * key + kCouplerDetuneCents;
-    }
-    if (fluid_synth_activate_key_tuning(synth_, 0, 0, "coupler+3c",
-                                        pitch.data(), 0) == 0) {
-        fluid_synth_activate_tuning(synth_, kCouplerChannel, 0, 0, 0);
-    }
 }
 
 bool HarmoniumPlugin::parse_drone_spec(const std::string& value,

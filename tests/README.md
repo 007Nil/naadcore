@@ -12,7 +12,8 @@ tests/
 │                          #   120 BPM, ch 0) + T8–T13 Phase 3/4/5 probes
 │                          #   (T10/T11 via gen_probes_phase4.py,
 │                          #   T12/T13 via gen_probes_phase5.py) + T16
-│                          #   coupler acoustic probe — in git
+│                          #   coupler acoustic probe + T17 coupler parity
+│                          #   probe (48/60/72/84) — in git
 ├── scripts/
 │   ├── gen_midi.py        # regenerates tests/midi/ (pure stdlib, no mido)
 │   ├── render_sf2.sh      # offline FluidSynth render of a track
@@ -29,22 +30,37 @@ tests/
 │   │                      #   T11 (multi-channel CC 123 + cross-ch off)
 │   ├── gen_probes_phase5.py # Phase 5 probes: T12 (drone feature),
 │   │                      #   T13 (drone + CC 123)
-│   ├── gen_probe_coupler_acoustic.py # coupler probe: T16 (single note 60)
+│   ├── gen_probe_coupler_acoustic.py # coupler audibility probe: T16 (note 60)
+│   ├── gen_probe_coupler_parity.py   # coupler parity probe: T17
+│   │                      #   (notes 48/60/72/84 — consecutive octave pairs)
 │   ├── check_coupler_acoustic.sh # render A/B acoustic coupler gate: renders
-│   │                      #   T16 with coupler=off vs coupler=on through the
-│   │                      #   real plugin, asserts the octave-up voice is
-│   │                      #   AUDIBLE in the on-render (see below)
-│   ├── coupler_acoustic_assert.py # the spectral assertions behind the above
-│   │                      #   (presence + octave-band placement + octave-line
-│   │                      #   growth; prints the measurements)
+│   │                      #   T16 OFF/ON through the real plugin and asserts
+│   │                      #   the octave-up voice is AUDIBLE AT PARITY
+│   │                      #   (coupler_acoustic_assert.py), then renders
+│   │                      #   T17 OFF/ON and asserts per-note octave-vs-main
+│   │                      #   parity at 48/60/72 (coupler_parity_measure.py)
+│   ├── coupler_acoustic_assert.py # spectral assertions behind the T16 half
+│   │                      #   (parity presence band + octave-band placement +
+│   │                      #   octave-line growth; onset-relative windows so
+│   │                      #   it also works on the full-stack e2e renders)
+│   ├── coupler_parity_measure.py # T17 parity measurements + gate: added
+│   │                      #   voice within +-2 dB of main at 48/60/72 and
+│   │                      #   octave-pair fundamental lines
+│   ├── midi_poke.cpp      # ALSA virtual MIDI source helper (full-stack e2e):
+│   │                      #   sequencer client with a READ/SUBS_READ port
+│   │                      #   (like a hardware keyboard) + timeline commands
+│   │                      #   (on/off/wait/waitfile/exit); built ad hoc
+│   │                      #   into the harness scratch dir, never committed
+│   │                      #   as a binary
 │   ├── sf2_audit.py       # SF2 binary structure dump (Phase 1 audit)
 │   └── run_config_tests.sh# compiles+runs test_plugin_config.cpp (ad hoc,
 │                          #   not wired into the project CMake build)
 ├── e2e_cli_coupler.sh    # E2E: CLI runtime coupler (stdin commands → plugin;
 │                          #   wipes ./build and rebuilds first, asserts the
 │                          #   exact coupler output sequence, EOF-alive
-│                          #   behavior, banner-vs-HEAD build id, and —
-│                          #   Check 4 — the acoustic coupler proof)
+│                          #   behavior, banner-vs-HEAD build id, the acoustic
+│                          #   parity gate — Check 4 — and the full-stack
+│                          #   virtual-MIDI e2e — Check 5)
 ├── analyze.py             # numpy WAV analysis (onset/release/AM/peak/RMS)
 ├── test_plugin_config.cpp # config-seam tests (gain/reverb/chorus +
 │                          #   attack_ms/release_ms + stop + coupler/
@@ -362,7 +378,7 @@ numpy carrier-line FFTs (Hanning window, ±2 Hz line windows) on the raw
 waveform — the same technique as the Phase 3 beat table.
 
 
-## CLI runtime coupler E2E harness (2026-09-19)
+## CLI runtime coupler E2E harness (2026-09-19, parity + full-stack 2026-09-20)
 
 `bash tests/e2e_cli_coupler.sh` (runs from anywhere; resolves the repo root
 from its own location):
@@ -380,20 +396,37 @@ from its own location):
    kill (no busy-spin, no exit).
 4. Sanity: the `naadcore-cli build <id>` startup banner's commit id must
    equal `git rev-parse --short HEAD`.
-5. **Acoustic coupler proof**: runs
-   `tests/scripts/check_coupler_acoustic.sh` — renders
-   `tests/midi/T16_coupler_acoustic.mid` (single note 60) twice through the
-   real plugin (coupler=off vs coupler=on pre-init, i.e. the state the
-   CLI's `coupler on` gives to new presses) and asserts spectrally that
-   the ON render contains the octave-up voice: (a) sustain power grows
-   +0.15…+1.5 dB, (b) ≥80% of the per-bin clipped added spectral power
-   lies above 1.4·f0 (the broken 2026-09-19 subsonic-tuning build put
-   ~100% of it below 260 Hz — this assertion is what catches that bug
-   class), (c) ≥3 FFT bins in the coupler's 2nd-partial zone (≈4·f0) grow
-   ≥6 dB over the OFF render. "Coupler works" means the octave is audible
-   in the render, not that the status says on. ~20 s extra runtime.
+5. **Acoustic parity gate** (Check 4,
+   `tests/scripts/check_coupler_acoustic.sh`): renders the T16 probe
+   (single note 60) OFF/ON through the real plugin (coupler=off vs
+   coupler=on pre-init, i.e. the state the CLI's `coupler on` gives to new
+   presses) and asserts spectrally that the ON render contains the
+   octave-up voice AT PARITY: (a) sustain power grows +1.5…+4.5 dB (two
+   equal-power voices ≈ +3 dB; the old CC7=60 build's +0.5 dB fails), (b)
+   ≥80% of the per-bin clipped added spectral power lies above 1.4·f0 (the
+   2026-09-19 subsonic-tuning bug put ~100% below 260 Hz), (c) ≥3 FFT
+   bins in the coupler's 2nd-partial zone (≈4·f0) grow ≥6 dB. Then renders
+   the T17 probe (notes 48/60/72/84) OFF/ON and asserts per-note parity
+   (`coupler_parity_measure.py --gate`): the added octave voice must sit
+   within ±2 dB of the main voice at the representative notes 48/60/72,
+   and the OFF render's octave-pair fundamental lines (48→60, 60→72,
+   72→84) within ±2 dB. "Coupler works" means the octave is audible at
+   the main's level in the render, not that the status says on.
+6. **Full-stack virtual-MIDI e2e** (Check 5, 2026-09-20): the entire chain
+   the user relies on — `coupler on` via the CLI's stdin AND real ALSA
+   NoteOn/NoteOff from `tests/scripts/midi_poke.cpp` (a virtual source
+   client with a READ/SUBS_READ port, built ad hoc into the scratch dir)
+   → CLI `--midi` subscription → plugin → FluidSynth "file" render. Two
+   runs (OFF/ON) render the same injected note 60 from a /tmp/opencode
+   scratch dir; the harness releases the MIDI timeline only after the CLI
+   prints "Listening for MIDI" (a note sent earlier is lost — subscription
+   race, proven during development), SIGTERMs the CLI so the file driver
+   finalizes the WAV, and runs `coupler_acoustic_assert.py` (onset-relative
+   windows) on the CLI-produced OFF/ON pair. PASS = the parity octave
+   survived stdin → PluginManager → set_config → ALSA → plugin → render
+   (measured +2.82 dB presence, identical to the plugin-in-loop render).
 
-Passes all checks as of 2026-09-19 (build id b69fa6f + coupler fix).
+Passes all 5 checks as of 2026-09-20 (coupler parity build).
 
 ## Reference-clip workflow
 
@@ -456,9 +489,11 @@ sox ../../tests/references/ref_refA.wav -n spectrogram -o ../renders/ab/ref_refA
 | T11_all_notes_off | (Phase 4) multi-channel CC 123 + cross-channel NoteOff → nothing stranded |
 | T12_drone_feature | (Phase 5) melody over a continuous drone + drone-only tail (drone=48,55 vs off comparison) |
 | T13_drone_cc123 | (Phase 5) drone + melody + CC 123 → everything to the floor, synth still alive |
-| T16_coupler_acoustic | coupler acoustic gate probe (single note 60, 3 s): rendered OFF/ON by check_coupler_acoustic.sh; the ON render must contain the audible octave-up voice |
+| T16_coupler_acoustic | coupler audibility gate probe (single note 60, 3 s): rendered OFF/ON by check_coupler_acoustic.sh; the ON render must contain the audible octave-up voice at parity |
+| T17_coupler_parity | coupler parity probe (notes 48/60/72/84 held 3 s each): rendered OFF/ON by check_coupler_acoustic.sh; consecutive notes are octave pairs, so the OFF render's fundamental lines measure the octave-vs-main level, and the ON/OFF growth gates the added octave voice within ±2 dB of main at 48/60/72 |
 
 T8–T13 are hand-generated probe tracks (small inline Python writers, same
 VLQ/format-0 technique as gen_midi.py; T10/T11 via
 `scripts/gen_probes_phase4.py`, T12/T13 via `scripts/gen_probes_phase5.py`;
-T16 via `scripts/gen_probe_coupler_acoustic.py`) — they are committed.
+T16 via `scripts/gen_probe_coupler_acoustic.py`, T17 via
+`scripts/gen_probe_coupler_parity.py`) — they are committed.
