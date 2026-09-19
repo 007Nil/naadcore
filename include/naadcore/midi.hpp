@@ -46,11 +46,18 @@ public:
      */
     int process_events();
 
+    /**
+     * @brief Get the file descriptor for select() polling
+     * @return File descriptor, or -1 if not open
+     */
+    int get_fd() const;
+
 private:
     snd_seq_t* seq_;
     EventCallback callback_;
     int client_;
     int port_;
+    int fd_; ///< ALSA sequencer file descriptor for select()
 };
 
 /**

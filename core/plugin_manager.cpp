@@ -213,6 +213,29 @@ void PluginManager::set_audio_device(const char* audio_device) {
     audio_device_ = audio_device ? audio_device : "";
 }
 
+std::string PluginManager::get_plugin_config(const std::string& path, const char* key) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    
+    auto it = plugins_.find(path);
+    if (it == plugins_.end()) {
+        return "";
+    }
+    
+    return it->second.plugin->get_config(key);
+}
+
+PluginResult PluginManager::set_plugin_config(const std::string& path, const char* key, const char* value) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    
+    auto it = plugins_.find(path);
+    if (it == plugins_.end()) {
+        std::cerr << "Plugin not loaded: " << path << std::endl;
+        return PLUGIN_ERROR;
+    }
+    
+    return it->second.plugin->set_config(key, value);
+}
+
 PluginResult PluginManager::initialize(const char* audio_driver) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     
