@@ -33,11 +33,14 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/apps/naadcore-cli)
 # Create harmonium plugin
 add_subdirectory(${CMAKE_SOURCE_DIR}/plugins/harmonium)
 
+# Create piano plugin
+add_subdirectory(${CMAKE_SOURCE_DIR}/plugins/piano)
+
 # Install rules
 install(TARGETS naadcore-cli
     RUNTIME DESTINATION bin
 )
 
-install(TARGETS naadcore_core harmonium_plugin
+install(TARGETS naadcore_core harmonium_plugin piano_plugin
     LIBRARY DESTINATION lib/naadcore
 )

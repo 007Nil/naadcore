@@ -1,8 +1,9 @@
-# NaadCore — Linux-Native Harmonium Synthesizer
+# NaadCore — Linux-Native Harmonium & Piano Synthesizer
 
-NaadCore is a modular, plugin-based synthesizer framework for Linux. The harmonium
-sound is delivered by the `harmonium` plugin (built on FluidSynth), loaded at runtime
-by the `naadcore-cli` application.
+NaadCore is a modular, plugin-based synthesizer framework for Linux. The
+**harmonium** and **piano** instruments are delivered as dynamically loaded
+plugins, built on FluidSynth, and loaded at runtime by the `naadcore-cli`
+application.
 
 ```
 Alesis Q49 (USB MIDI, ALSA 20:0)
@@ -11,14 +12,14 @@ ALSA sequencer
         ↓
 naadcore-cli (MIDI input, event routing)
         ↓
-PluginManager → libharmonium_plugin.so (INaadPlugin)
+PluginManager → libharmonium_plugin.so  or  libpiano_plugin.so  (INaadPlugin)
         ↓
-Embedded FluidSynth + harmonium.sf2
+Embedded FluidSynth + harmonium_v3.sf2  /  GeneralUserGS.sf2
         ↓
 ALSA audio → speakers
 ```
 
-**Success criterion:** Press a key on the Q49 → hear the harmonium.
+**Success criterion:** Press a key on the Q49 → hear the instrument.
 
 ## Build
 
@@ -36,12 +37,13 @@ cmake -B build
 cmake --build build -j4
 ```
 
-This builds exactly three targets:
+This builds exactly four targets:
 
 | Target | Output |
 |---|---|
 | `naadcore_core` | `build/libnaadcore_core.so` (shared core library) |
 | `harmonium_plugin` | `build/plugins/libharmonium_plugin.so` |
+| `piano_plugin` | `build/plugins/libpiano_plugin.so` |
 | `naadcore-cli` | `build/apps/naadcore-cli/naadcore-cli` |
 
 ## Run
@@ -67,10 +69,14 @@ the CLI. Plain flags are still available:
 From the project root:
 
 ```bash
+# Harmonium
 ./build/apps/naadcore-cli/naadcore-cli --plugin ./build/plugins/libharmonium_plugin.so --midi 20:0
+
+# Piano
+./build/apps/naadcore-cli/naadcore-cli --plugin ./build/plugins/libpiano_plugin.so --midi 20:0
 ```
 
-Expected output:
+Expected harmonium output:
 
 ```
 Loading plugin: ./build/plugins/libharmonium_plugin.so
@@ -122,22 +128,30 @@ There is no `--soundfont` flag: SoundFonts are embedded in plugins at build time
 
 ### SoundFont embedding
 
-The harmonium plugin is **self-contained**: every font it can load is
-committed in the repository under `plugins/harmonium/soundfonts/`
+Both plugins are **self-contained**: every SoundFont they load is committed in
+the repository. The path is compiled into each plugin via
+`target_compile_definitions()` at build time. The plugin loads it via
+`fluid_synth_sfload()` during `init()`.
+
+### Harmonium
+
+The harmonium plugin loads from `plugins/harmonium/soundfonts/`
 (upstream provenance copy `harmonium_original.sf2` + derived fonts
 `harmonium_v2.sf2` / `harmonium_v3.sf2` — see
-`plugins/harmonium/soundfonts/README.md`). The path is compiled into the
-plugin via `HARMONIUM_SOUNDFONT_PATH` in
-`plugins/harmonium/CMakeLists.txt`. The default is the in-repo derived font
-`plugins/harmonium/soundfonts/harmonium_v3.sf2` (preset 0 "harmonium" —
-identical to the original font — preset 1 "harmonium double", the Phase 3
-detuned 2-reed stop, and preset 2 "key click", the Phase 6 self-ending
-chiff layer; see HANDOVER.md "Reed stops" and "Key click + micro-variation");
-override it at configure time for a custom font:
-
+`plugins/harmonium/soundfonts/README.md`). The default is
+`harmonium_v3.sf2` (preset 0 "harmonium" + presets 1/2). Override:
 ```bash
 cmake -B build -DHARMONIUM_SOUNDFONT_PATH=/path/to/other.sf2
-cmake --build build -j4
+```
+
+### Piano
+
+The piano plugin loads from `plugins/piano/soundfonts/`. The default is
+`GeneralUserGS.sf2` (~30 MB, royalty-free — S. Christian Collins' GeneralUser
+GS 1.44). See `plugins/piano/soundfonts/README.md` for provenance and for why
+the previous Salamander conversion was replaced. Override:
+```bash
+cmake -B build -DPIANO_SOUNDFONT_PATH=/path/to/other.sf2
 ```
 
 ## Verify the MIDI connection
@@ -194,7 +208,8 @@ stops.
 
 ```
 naadcore/
-├── CMakeLists.txt                  # Root build: naadcore_core, naadcore-cli, harmonium_plugin
+├── CMakeLists.txt                  # Root build: naadcore_core, naadcore-cli,
+│                                   #   harmonium_plugin, piano_plugin
 ├── include/naadcore/               # Public headers (canonical)
 │   ├── plugin.hpp                  # INaadPlugin interface, MidiEvent, PluginInfo, PluginResult
 │   ├── plugin_manager.hpp          # PluginManager singleton
@@ -211,6 +226,13 @@ naadcore/
 │   │                               #   (harmonium_original/_v2/_v3.sf2)
 │   ├── harmonium_plugin.hpp
 │   └── harmonium_plugin.cpp        # Embedded FluidSynth synth, exports C factory functions
+├── plugins/piano/                  # Piano plugin
+│   ├── CMakeLists.txt              # Embeds PIANO_SOUNDFONT_PATH
+│   ├── soundfonts/
+│   │   ├── README.md               # Source + license (royalty-free)
+│   │   └── GeneralUserGS.sf2       # ~30 MB, GM bank (preset 0 = grand piano)
+│   ├── piano_plugin.hpp
+│   └── piano_plugin.cpp
 ├── tests/                          # Realism test harness (T1–T7 tracks, render/capture
 │   │                               #   scripts, analyze.py, config-seam tests)
 │   └── README.md
@@ -219,7 +241,7 @@ naadcore/
 
 ## Documentation
 
-- `HANDOVER.md` — authoritative handover / current state
+- `HANDOVER.md` — authoritative handover / current state (includes piano plugin section)
 - `docs/NAADCORE_ARCHITECTURE.md` — system architecture
 - `docs/PLUGIN_SYSTEM.md` — plugin system overview
 - `docs/PLUGIN_DEVELOPMENT.md` — how to write a new plugin
@@ -229,6 +251,7 @@ naadcore/
 - `docs/HARMONIUM_SF2_AUDIT.md` — harmonium.sf2 structure audit
 - `docs/NAADCORE_MVP_CHALLENGE.md` — historical MVP record (completed)
 - `tests/README.md` — realism test harness (test tracks, renders, A/B workflow)
+- `plugins/piano/soundfonts/README.md` — piano SoundFont provenance + license
 
 ## License
 

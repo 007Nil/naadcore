@@ -1,0 +1,3 @@
+# No LFS-tracked files currently. The 30 MB GeneralUserGS.sf2 is committed
+# directly (under GitHub's 100 MB limit). Re-add a filter=lfs line here if a
+# font larger than 100 MB is ever committed.
