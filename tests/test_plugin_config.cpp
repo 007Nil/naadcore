@@ -336,22 +336,30 @@ int main(int argc, char** argv) {
 
     // ---- Phase 4 behavior, state-level (headless: only PLUGIN_OK and
     // config readback are observable here; audible verification is done
-    // with plugin-in-loop renders — see tests/RESULTS.md Phase 4) ----
+    // with plugin-in-loop renders — see tests/RESULTS.md Phase 4 and the
+    // coupler acoustic check in tests/scripts/check_coupler_acoustic.sh) —
 
     // Mid-phrase layer toggles: set_config BETWEEN note events must not
-    // disturb anything and the note-off still releases cleanly (the
-    // layer voices started/released for the held note internally).
+    // disturb anything and the note-off still releases cleanly.
+    // COUPLER (user spec, 2026-09-19): a mid-hold toggle does NOT
+    // retro-add/remove the octave voice on held notes — the new state
+    // applies to NEW presses; every voice started at press time is
+    // released at NoteOff (HeldNote.layers bookkeeping). SUB_OCTAVE keeps
+    // the Phase 4 retro semantics (toggle starts/releases the layer for
+    // held notes). At the state level both paths are PLUGIN_OK + clean
+    // release; the coupler's no-retro semantics are proven acoustically.
     ev.type = naadcore::MidiEvent::NOTE_ON;
     ev.channel = 0;
     ev.data1 = 60;
     ev.data2 = 100;
     check_result("toggle: note on", p->handle_midi_event(ev),
                  naadcore::PLUGIN_OK);
-    check_result("toggle: coupler on mid-phrase",
+    check_result("toggle: coupler on mid-phrase (new presses only)",
                  p->set_config("coupler", "on"), naadcore::PLUGIN_OK);
-    check_result("toggle: sub_octave on mid-phrase",
+    check_result("toggle: sub_octave on mid-phrase (retro)",
                  p->set_config("sub_octave", "on"), naadcore::PLUGIN_OK);
-    check_result("toggle: coupler off mid-phrase",
+    check_result("toggle: coupler off mid-phrase (held notes keep their "
+                 "voices until NoteOff)",
                  p->set_config("coupler", "off"), naadcore::PLUGIN_OK);
     check_result("toggle: sub_octave off mid-phrase",
                  p->set_config("sub_octave", "off"), naadcore::PLUGIN_OK);

@@ -170,7 +170,6 @@ PluginResult HarmoniumPlugin::init(const char* audio_driver) {
     // and the order is simply harmless).
     apply_click_preset();
     apply_layer_gains();
-    apply_coupler_detune();
     std::cout << "Synth layers: coupler=" << (coupler_on_ ? "on" : "off")
               << " sub_octave=" << (sub_octave_on_ ? "on" : "off")
               << " (ch" << kCouplerChannel << "=note+12 CC7=" << kCouplerCC7
@@ -270,9 +269,11 @@ void HarmoniumPlugin::apply_layer_gains() {
     if (!synth_) {
         return;
     }
-    // The internal channels carry their layer at a fixed gain below the
-    // main voice; CC 7 events are never mirrored to them (see
-    // handle_midi_event), so these values stay the layer gain knob.
+    // The internal channels carry their layer at a fixed channel gain;
+    // CC 7 events are never mirrored to them (see handle_midi_event), so
+    // these values stay the layer gain knob. The coupler's value is
+    // FluidSynth's default channel volume (100) — parity with the main
+    // voice (same gain, same played velocity, exactly +12 semitones).
     fluid_synth_cc(synth_, kCouplerChannel, 7, kCouplerCC7);
     fluid_synth_cc(synth_, kSubOctaveChannel, 7, kSubOctaveCC7);
     // The click layer's fixed channel gain lives here too: apply_layer_
@@ -280,22 +281,6 @@ void HarmoniumPlugin::apply_layer_gains() {
     // at init and after every stop change.
     fluid_synth_cc(synth_, kClickChannel, 7,
                    static_cast<uint8_t>(kClickCC7));
-}
-
-void HarmoniumPlugin::apply_coupler_detune() {
-    if (!synth_) {
-        return;
-    }
-    // Optional subtle beat between the main voice and its octave coupler:
-    // raise the coupler channel +3 cents via the MIDI Tuning Standard API.
-    // Tunings live outside the SoundFont/preset namespace and survive
-    // program_select, so this is applied once at init. Failure is silent —
-    // the double-stop zones already provide shimmer (this is a bonus).
-    std::vector<double> pitch(128, kCouplerDetuneCents);
-    if (fluid_synth_activate_key_tuning(synth_, 0, 0, "coupler+3c",
-                                        pitch.data(), 0) == 0) {
-        fluid_synth_activate_tuning(synth_, kCouplerChannel, 0, 0, 0);
-    }
 }
 
 bool HarmoniumPlugin::parse_drone_spec(const std::string& value,
@@ -757,6 +742,10 @@ std::string HarmoniumPlugin::get_config(const char* key) {
     if (k == "sub_octave") {
         return sub_octave_on_ ? "on" : "off";
     }
+    if (k == "status") {
+        // Return current state in a readable format
+        return coupler_on_ ? "on" : "off";
+    }
     if (k == "drone") {
         return drone_spec_;
     }
@@ -895,10 +884,19 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
     }
 
     // Layer router (Phase 4): octave coupler + sub-octave toggles. Like
-    // the other on/off keys, values are strictly validated. Toggling while
-    // notes are held starts/releases that layer for every held note at
-    // its stored sounding_velocity (mid-phrase coupler change, like the
-    // predecessor's refreshAudio); the bellows reference is untouched.
+    // the other on/off keys, values are strictly validated.
+    //
+    // COUPLER semantics (user spec, 2026-09-19): the new state applies to
+    // NEW presses only — a mid-hold toggle must NOT retro-add or
+    // retro-remove the octave voice on already-held notes (no
+    // set_layer_for_all_held). Notes pressed while the coupler was on
+    // keep their octave voice until their own NoteOff, which releases
+    // every voice started at press time via the HeldNote.layers bits
+    // (release_held_note). The bellows reference is untouched either way.
+    //
+    // sub_octave deliberately KEEPS the Phase 4 mid-phrase retro semantics
+    // (toggling starts/releases that layer for every held note at its
+    // stored played_velocity) — changing it is out of scope here.
     if (k == "coupler" || k == "sub_octave") {
         const std::string v = value;
         bool on = false;
@@ -913,11 +911,16 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
         bool& flag = is_coupler ? coupler_on_ : sub_octave_on_;
         const bool changed = (flag != on);
         flag = on;
-        if (synth_ && changed) {
-            set_layer_for_all_held(is_coupler ? kLayerCoupler
-                                              : kLayerSubOctave,
-                                   on);
+        if (synth_ && changed && !is_coupler) {
+            set_layer_for_all_held(kLayerSubOctave, on);
         }
+        return PLUGIN_OK;
+    }
+    
+    // Status command - return the current state
+    if (k == "status") {
+        // This is a special case - status command returns current state
+        // but doesn't change it. We'll handle this in the CLI layer
         return PLUGIN_OK;
     }
 

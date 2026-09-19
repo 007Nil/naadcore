@@ -5,7 +5,7 @@
 
 namespace naadcore {
 
-MidiInput::MidiInput() : seq_(nullptr), client_(0), port_(0) {
+MidiInput::MidiInput() : seq_(nullptr), client_(0), port_(0), fd_(-1) {
 }
 
 MidiInput::~MidiInput() {
@@ -83,6 +83,17 @@ bool MidiInput::open(const std::string& client_port) {
 
     std::cout << "MIDI input connected: " << client_port << " -> "
               << (int)my_client << ":" << p << std::endl;
+    
+    // Get the file descriptor for select() - the sequencer uses poll() internally
+    // but has a single file descriptor we can use for select()
+    struct pollfd pfd;
+    int err2 = snd_seq_poll_descriptors(seq_, &pfd, 1, POLLIN);
+    if (err2 >= 1) {
+        fd_ = pfd.fd;
+    } else {
+        fd_ = -1;
+    }
+    
     return true;
 }
 
@@ -91,6 +102,7 @@ void MidiInput::close() {
         snd_seq_close(seq_);
         seq_ = nullptr;
     }
+    fd_ = -1;
 }
 
 void MidiInput::set_callback(EventCallback callback) {
@@ -115,6 +127,10 @@ int MidiInput::process_events() {
     }
 
     return count;
+}
+
+int MidiInput::get_fd() const {
+    return fd_;
 }
 
 // ============================================================================

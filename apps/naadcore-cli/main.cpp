@@ -6,6 +6,10 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <alsa/asoundlib.h>
+#include <sys/select.h>
+#include <fcntl.h>
+#include <sstream>
+#include <algorithm>
 
 namespace naadcore {
 
@@ -29,14 +33,12 @@ private:
     std::string audio_device_;
     bool show_help_;
     
-    bool running_;
-    
-    void signal_handler(int signum);
+     void handle_stdin_command(PluginManager& pm, const std::string& command);
 };
 
 NaadCoreCLI::NaadCoreCLI() 
     : plugin_path_(""), midi_input_str_(""), audio_driver_("alsa"),
-      audio_device_(""), show_help_(false), running_(false) {
+      audio_device_(""), show_help_(false) {
 }
 
 NaadCoreCLI::~NaadCoreCLI() {
@@ -233,12 +235,12 @@ int NaadCoreCLI::run() {
         });
     }
     
-    // Setup signal handlers
+    // Setup signal handlers - use a static variable to track running state
+    static volatile sig_atomic_t running_flag = 1;
     struct sigaction sa;
     sa.sa_handler = [](int signum) {
         std::cout << "\nReceived signal " << signum << ", shutting down..." << std::endl;
-        PluginManager::instance().cleanup();
-        exit(0);
+        running_flag = 0;
     };
     sa.sa_flags = 0;
     sigemptyset(&sa.sa_mask);
@@ -250,23 +252,117 @@ int NaadCoreCLI::run() {
     if (!midi_input_str_.empty()) {
         std::cout << "Listening for MIDI from " << midi_input_str_ << std::endl;
     }
+    std::cout << "CLI commands: coupler on|off, status" << std::endl;
     
-    running_ = true;
+    // Setup stdin for non-blocking reads using select()
+    int stdin_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, stdin_flags | O_NONBLOCK);
     
-    // Main loop - process MIDI events if MIDI input is configured
-    if (!midi_input_str_.empty()) {
-        while (running_) {
-            int events = midi_input.process_events();
-            if (events == 0) {
-                usleep(1000); // 1ms sleep
+    // Stdin command state: partial lines are buffered across read() calls so
+    // a command without a trailing newline still works once more bytes (or
+    // EOF) arrive. After EOF we stop selecting on stdin entirely (otherwise
+    // select() would report it readable forever and busy-spin the loop).
+    bool stdin_open = true;
+    std::string stdin_pending;
+    
+    // Trim leading/trailing whitespace from a command line
+    auto trim = [](std::string s) {
+        s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }));
+        s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }).base(), s.end());
+        return s;
+    };
+    
+    // Process every complete line currently in the pending buffer
+    auto process_pending_lines = [&](bool flush_residual) {
+        size_t pos = 0;
+        size_t newline_pos;
+        while ((newline_pos = stdin_pending.find('\n', pos)) != std::string::npos) {
+            std::string command = trim(stdin_pending.substr(pos, newline_pos - pos));
+            if (!command.empty()) {
+                handle_stdin_command(pm, command);
+            }
+            pos = newline_pos + 1;
+        }
+        // Keep the unfinished tail; on EOF flush it as a final command
+        stdin_pending.erase(0, pos);
+        if (flush_residual) {
+            std::string command = trim(stdin_pending);
+            if (!command.empty()) {
+                handle_stdin_command(pm, command);
+            }
+            stdin_pending.clear();
+        }
+    };
+    
+    // Main loop - process MIDI events and stdin commands
+    while (running_flag) {
+        // Create fd_set for select()
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        if (stdin_open) {
+            FD_SET(STDIN_FILENO, &read_fds);
+        }
+        
+        int max_fd = STDIN_FILENO;
+        if (!midi_input_str_.empty()) {
+            // Get the fd from MidiInput
+            int midi_fd = midi_input.get_fd();
+            if (midi_fd >= 0) {
+                FD_SET(midi_fd, &read_fds);
+                max_fd = std::max(max_fd, midi_fd);
             }
         }
-    } else {
-        std::cout << "No MIDI input configured. Running without MIDI." << std::endl;
-        while (running_) {
-            usleep(100000); // 100ms sleep
+        
+        // Use a small timeout to allow checking running_flag
+        struct timeval timeout;
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 10000; // 10ms
+        
+        int activity = select(max_fd + 1, &read_fds, nullptr, nullptr, &timeout);
+        
+        if (activity < 0 && errno != EINTR) {
+            std::cerr << "Select error: " << strerror(errno) << std::endl;
+            break;
         }
+        
+        // Check for stdin activity
+        if (stdin_open && FD_ISSET(STDIN_FILENO, &read_fds)) {
+            char buffer[1024];
+            ssize_t bytes_read = read(STDIN_FILENO, buffer, sizeof(buffer));
+            
+            if (bytes_read > 0) {
+                // Append raw bytes; a command executes only when a '\n'
+                // arrives (partial lines are buffered across read() calls)
+                stdin_pending.append(buffer, static_cast<size_t>(bytes_read));
+                process_pending_lines(false);
+            } else if (bytes_read == 0) {
+                // EOF: print once, flush any residual non-empty line as a
+                // final command, and stop selecting on stdin (a closed fd
+                // is permanently "readable" — selecting on it would
+                // busy-spin the loop)
+                std::cout << "stdin closed (EOF) - CLI commands disabled, Ctrl+C to exit" << std::endl;
+                process_pending_lines(true);
+                stdin_open = false;
+            }
+            // bytes_read < 0: EAGAIN/EINTR (non-blocking fd) — retry next iteration
+        }
+        
+        // Process MIDI events if configured
+        if (!midi_input_str_.empty()) {
+            int events = midi_input.process_events();
+            (void)events; // Suppress unused variable warning
+        }
+        
+        // Small sleep to prevent busy waiting
+        usleep(1000);
     }
+    
+    // Restore stdin flags
+    fcntl(STDIN_FILENO, F_SETFL, stdin_flags);
     
     // Cleanup
     std::cout << "Cleaning up..." << std::endl;
@@ -276,6 +372,61 @@ int NaadCoreCLI::run() {
     return 0;
 }
 
+// ============================================================================
+// CLI command handler
+// ============================================================================
+
+void NaadCoreCLI::handle_stdin_command(PluginManager& pm, const std::string& command) {
+    // Split command into parts
+    std::istringstream iss(command);
+    std::vector<std::string> tokens;
+    std::string token;
+    
+    while (iss >> token) {
+        tokens.push_back(token);
+    }
+    
+    if (tokens.empty()) {
+        return;
+    }
+    
+    // Handle commands
+    if (tokens[0] == "coupler") {
+        if (tokens.size() < 2) {
+            std::cout << "Usage: coupler on|off" << std::endl;
+            return;
+        }
+        
+        if (tokens[1] == "on") {
+            PluginResult result = pm.set_plugin_config(plugin_path_, "coupler", "on");
+            if (result == PLUGIN_OK) {
+                std::cout << "Coupler ON" << std::endl;
+            } else {
+                std::cout << "Failed to set coupler ON" << std::endl;
+            }
+        } else if (tokens[1] == "off") {
+            PluginResult result = pm.set_plugin_config(plugin_path_, "coupler", "off");
+            if (result == PLUGIN_OK) {
+                std::cout << "Coupler OFF" << std::endl;
+            } else {
+                std::cout << "Failed to set coupler OFF" << std::endl;
+            }
+        } else {
+            std::cout << "Invalid coupler command. Usage: coupler on|off" << std::endl;
+        }
+    } else if (tokens[0] == "status") {
+        std::string value = pm.get_plugin_config(plugin_path_, "coupler");
+        if (!value.empty()) {
+            std::cout << "Coupler: " << value << std::endl;
+        } else {
+            std::cout << "No coupler configuration found" << std::endl;
+        }
+    } else {
+        std::cout << "Unknown command: " << command << std::endl;
+        std::cout << "Available commands: coupler on, coupler off, status" << std::endl;
+    }
+}
+
 } // namespace naadcore
 
 // ============================================================================
@@ -283,6 +434,11 @@ int NaadCoreCLI::run() {
 // ============================================================================
 
 int main(int argc, char* argv[]) {
+    // Build identifier banner — lets a stale binary be detected at a glance
+    // (NAADCORE_BUILD_ID = short commit hash + configure date, set at CMake
+    // configure time in apps/naadcore-cli/CMakeLists.txt).
+    std::cout << "naadcore-cli build " NAADCORE_BUILD_ID << std::endl;
+
     naadcore::NaadCoreCLI cli;
     
     if (!cli.parse_args(argc, argv)) {

@@ -86,6 +86,23 @@ public:
     void set_audio_device(const char* audio_device);
 
     /**
+     * @brief Get configuration value from loaded plugin
+     * @param path Path to the plugin
+     * @param key Configuration key name
+     * @return Configuration value, or empty string if not found
+     */
+    std::string get_plugin_config(const std::string& path, const char* key);
+
+    /**
+     * @brief Set configuration value on loaded plugin
+     * @param path Path to the plugin
+     * @param key Configuration key name
+     * @param value Configuration value
+     * @return PLUGIN_OK on success, error code otherwise
+     */
+    PluginResult set_plugin_config(const std::string& path, const char* key, const char* value);
+
+    /**
      * @brief Initialize plugin system
      * @param audio_driver Audio driver to use for plugins
      * @return PLUGIN_OK on success, error code otherwise

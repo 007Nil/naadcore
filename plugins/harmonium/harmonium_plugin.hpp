@@ -83,8 +83,8 @@ private:
 
     // Layer router (Phase 4). Each held note can additionally sound on
     // fixed internal FluidSynth channels, all on the current stop preset:
-    //   channel 15 = octave coupler  (note + 12, ~6 dB below main)
-    //   channel 14 = sub-octave      (note - 12, quieter still)
+    //   channel 15 = octave coupler  (note + 12, at PARITY with main)
+    //   channel 14 = sub-octave      (note - 12, quieter)
     // Channel 7 (volume) on the internal channels IS their gain knob, so
     // incoming CC 7 is never mirrored to them; CC 11 (expression) and
     // pitch bend are mirrored to active layers. Channels 12-15 are thus
@@ -95,16 +95,17 @@ private:
     static constexpr uint8_t kLayerSubOctave = 0x2; ///< HeldNote.layers bit
     static constexpr int kCouplerChannel = 15;
     static constexpr int kSubOctaveChannel = 14;
-    /// Channel-volume (CC 7) layer gains. CC 7 maps to initial-attenuation
-    /// via FluidSynth's default modulator (960 cB at CC7=0, linear in the
-    /// source): the values below were tuned against plugin-in-loop renders
-    /// (see HANDOVER.md "Layer router" for the measured dB vs main).
-    static constexpr int kCouplerCC7 = 60;
+    /// Channel-volume (CC 7) layer gains. The COUPLER is at PARITY with the
+    /// main voice (user spec, 2026-09-20): kCouplerCC7 = 100 is FluidSynth's
+    /// default channel volume — the same value the untouched main channels
+    /// sit at — and the coupler voice is started at the note's own played
+    /// velocity, so the octave sounds exactly like the same key pressed one
+    /// octave up: no separate level curve, no detune, exactly +12 semitones.
+    /// (Was CC7=60 ≈ −9 dB + a +3¢ detune until 2026-09-20 — audible but
+    /// far too subtle to read as octave doubling; see HANDOVER.md "Layer
+    /// router".) The sub-octave keeps its fixed background-layer gain.
+    static constexpr int kCouplerCC7 = 100;
     static constexpr int kSubOctaveCC7 = 40;
-    /// Optional coupler detune (+3 cents, coupler channel only) via the
-    /// MIDI Tuning Standard API — subtle beat between main and octave
-    /// layer. The double-stop zones already shimmer; this is a bonus.
-    static constexpr double kCouplerDetuneCents = 3.0;
 
     bool coupler_on_ = false;
     bool sub_octave_on_ = false;
@@ -229,8 +230,10 @@ private:
     void set_note_layer(HeldNote& held, uint8_t layer_bit, bool on);
 
     /// Start/release a layer's voice for EVERY currently held note
-    /// (mid-phrase coupler/sub_octave config toggle). Each note sounds at
-    /// its stored sounding_velocity; the bellows reference is untouched.
+    /// (mid-phrase sub_octave config toggle — the COUPLER key deliberately
+    /// does NOT use this: its new state applies to new presses only, per
+    /// the user spec; see set_config). Each note sounds at its stored
+    /// played_velocity; the bellows reference is untouched.
     void set_layer_for_all_held(uint8_t layer_bit, bool on);
 
     /// Apply attack_ms_/release_ms_ as volume-envelope generators on all
@@ -251,11 +254,6 @@ private:
     /// Set the layer-gain CC 7 values on the internal channels (called at
     /// init and after every stop change, next to apply_stop()).
     void apply_layer_gains();
-
-    /// Create a +3 cents tuning and activate it on the coupler channel
-    /// only (once at init; tunings survive program changes). Silent no-op
-    /// if the synth is not ready or the API call fails.
-    void apply_coupler_detune();
 
     /// Validate + parse a "drone" value into note numbers. "off" and ""
     /// both parse to an empty list; anything else must be a comma-
