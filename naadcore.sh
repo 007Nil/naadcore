@@ -43,7 +43,7 @@ check_lfs_files() {
   if [[ -f "$ROOT/.gitattributes" ]]; then
     while IFS= read -r p; do
       lfspatterns+=("$p")
-    done < <(grep -E ' filter=lfs$' "$ROOT/.gitattributes" | awk '{print $1}')
+    done < <(grep -E ' filter=lfs' "$ROOT/.gitattributes" | awk '{print $1}')
     msg "  LFS patterns found: ${#lfspatterns[@]}"
   else
     msg "  No .gitattributes — skipping LFS check."
