@@ -6,7 +6,12 @@ PluginManager → pre-init `set_config("audio_device")` → plugin maps it per
 driver into FluidSynth settings; well-known environment keys convention
 formalized in docs; **Phase B: launcher audio-device menu** — `naadcore.sh`
 gained a driver-dependent `choose_device` step (alsa PCMs / PulseAudio sinks /
-pipewire skip) with a plugin-default skip entry as the EOF-safety default)
+pipewire skip) with a plugin-default skip entry as the EOF-safety default;
+**Self-contained plugin: the upstream SoundFont is now committed in-repo**
+(`plugins/harmonium/soundfonts/harmonium_original.sf2` — provenance/derivation
+input; the build, the plugin fallback and every script/doc reference the
+in-repo fonts only — the former external path
+`/home/nil/harmonium-companion/harmonium.sf2` is retired everywhere)
 
 ## Project purpose
 
@@ -72,6 +77,11 @@ naadcore/
 │       ├── CMakeLists.txt          # Embeds HARMONIUM_SOUNDFONT_PATH (default:
 │       │                           #   in-repo harmonium_v3.sf2), outputs to build/plugins/
 │       ├── soundfonts/
+│       │   ├── README.md             # Provenance: what each font is, the
+│       │   │                         #   checksum, the derivation chain
+│       │   ├── harmonium_original.sf2 # Committed upstream provenance copy
+│       │   │                         #   (byte-identical to the original
+│       │   │                         #   font; derive_sf2.py's default input)
 │       │   ├── harmonium_v3.sf2    # Derived font (Phase 6, committed, DEFAULT):
 │       │   │                       #   presets 0 "harmonium" (byte-identical to
 │       │   │                       #   the original) + 1 "harmonium double"
@@ -360,19 +370,30 @@ unset). The CLI calls it alongside `set_audio_driver()` before
 ## Embedded SoundFont mechanism
 
 The harmonium plugin has no runtime SoundFont flag. The path is baked in at
-compile time:
+compile time, and the plugin is **fully self-contained** — everything it
+loads lives in `plugins/harmonium/soundfonts/` (nothing outside the
+repository is ever read):
 
 - `plugins/harmonium/CMakeLists.txt` sets the CMake variable
   `HARMONIUM_SOUNDFONT_PATH` (default since Phase 6:
   `${CMAKE_SOURCE_DIR}/plugins/harmonium/soundfonts/harmonium_v3.sf2` —
   the in-repo derived font with the click preset, portable across
-  machines; the Phase 3 font harmonium_v2.sf2 stays committed for
-  comparability; the original machine-specific
-  `/home/nil/harmonium-companion/harmonium.sf2` remains available via
-  `-D` override)
+  machines; the Phase 3 font harmonium_v2.sf2 and the upstream provenance
+  copy harmonium_original.sf2 (the derivation input, byte-identical to the
+  original font) are also committed; any other font remains available via
+  the `-D` override)
   and passes it as a `target_compile_definitions(... PRIVATE)` preprocessor macro.
-- `harmonium_plugin.cpp` has a `#ifndef HARMONIUM_SOUNDFONT_PATH` fallback with
-  the same path, then loads it via `fluid_synth_sfload()` during `init()`.
+- `harmonium_plugin.cpp` has a `#ifndef HARMONIUM_SOUNDFONT_PATH` fallback
+  (`"plugins/harmonium/soundfonts/harmonium_v3.sf2"` — repo-root-relative;
+  a non-CMake build must run from the repository root for it to resolve),
+  then loads it via `fluid_synth_sfload()` during `init()`.
+- Provenance: the original upstream font is committed in-repo as
+  `harmonium_original.sf2` (checksum in `soundfonts/README.md`) and is the
+  default input of `tests/scripts/derive_sf2.py`, which regenerates v2/v3
+  byte-identically (verified 2026-09-19). The historical external location
+  (`/home/nil/harmonium-companion/harmonium.sf2`) is no longer referenced
+  by the build, the plugin, or any script — the former "machine-specific
+  path" limitation is **resolved**.
 - Override for custom builds: `cmake -B build -DHARMONIUM_SOUNDFONT_PATH=/path/to.sf2`
   (or at runtime via the `soundfont_path` config key before `init()`).
 
@@ -465,7 +486,7 @@ Plus the pre-existing keys: `soundfont_path`, `audio_driver`, and (Phase A)
 semantics, echo behavior, invalid-input behavior, FluidSynth mechanism) now
 lives in **docs/HARMONIUM_CONFIG.md** — consult that registry first.
 
-Verified: 96/96 config-seam checks at the time (now 267/267 — see
+Verified: 96/96 config-seam checks at the time (now 287/287 — see
 tests/RESULTS.md; `tests/scripts/run_config_tests.sh`); live capture peak
 level matches the offline render exactly (−25.7 dBFS for note 60 @ vel 100).
 
@@ -517,8 +538,8 @@ tests/RESULTS.md has the full table): T1 release-to-−60 dB 46–70 ms →
 The signature harmonium "slow beating/shimmer": two slightly detuned unison
 reeds per note beat against each other at the difference frequency. Phase 3
 implements a `stop` config key backed by SoundFont presets in a **derived
-font** — the original `/home/nil/harmonium-companion/harmonium.sf2` was
-never modified.
+font** — the original font (committed in-repo as
+`plugins/harmonium/soundfonts/harmonium_original.sf2`) was never modified.
 
 **Derived font** `plugins/harmonium/soundfonts/harmonium_v2.sf2` (committed,
 generated by `tests/scripts/derive_sf2.py`, regenerable):
@@ -831,10 +852,11 @@ reed — 80/80 onsets), T1 high −4.3 ms; T2 legato + T1 with click on stay
 clean; T12 drone render unchanged (drone 48/55 lines at −59.5/−60.3 dBFS
 identical to Phase 5, melody −45.9 bit-stable, drone-only tail flat — no
 clicks from the fixture); T10 swallowed duplicates make no click; v2 font +
-key_click = bit-exact no-op; 267/267 config tests; clean build 0 warnings.
+key_click = bit-exact no-op; 287/287 config tests; clean build 0 warnings.
 
 **Config-key registry.** `key_click` and `variation` are documented in
-docs/HARMONIUM_CONFIG.md (14 keys total).
+docs/HARMONIUM_CONFIG.md (15 keys total, including the Phase A
+`audio_device` key).
 
 ## Harmonium realism test harness (Phase 0, 2026-09-18)
 
@@ -905,7 +927,7 @@ To clear a stuck note in a live instance:
 The plugin is feature-complete per the plan: pinned voicing, runtime
 envelope shaping, double-reed shimmer (derived in-repo font), octave
 coupler + sub-octave layers, drone, key-click layer, per-note
-micro-variation — 14 config keys (see `docs/HARMONIUM_CONFIG.md`), 267/267
+micro-variation — 14 config keys (see `docs/HARMONIUM_CONFIG.md`), 287/287
 config-seam tests, objective verification in `tests/RESULTS.md`, and a
 prepared reference A/B package for subjective listening. The user has
 closed out this phase; future NaadCore work focuses on **other plugins**.

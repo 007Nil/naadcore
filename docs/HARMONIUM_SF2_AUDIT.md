@@ -49,8 +49,20 @@
 > (`click_preset_ok_` guard). See HANDOVER.md "Key click + micro-variation"
 > and tests/RESULTS.md Phase 6.
 
-Audit of `/home/nil/harmonium-companion/harmonium.sf2` (the SoundFont
-compiled into the harmonium plugin via `HARMONIUM_SOUNDFONT_PATH`).
+> **Self-containment disposition (2026-09-19):** the audited font is now
+> **committed in-repo** as `plugins/harmonium/soundfonts/harmonium_original.sf2`
+> (byte-identical copy; sha256 `156945f8…d5bfeff` — full checksum in
+> `plugins/harmonium/soundfonts/README.md`). The build/derivation chain no
+> longer references the former external location (`/home/nil/
+> harmonium-companion/harmonium.sf2`, now retired): that path was only ever
+> the derivation input and a historical build default — the CMake default
+> font has been the in-repo `harmonium_v3.sf2` since Phase 6. The plugin is
+> self-contained; see the soundfonts README for the provenance chain.
+>
+> Audit of `/home/nil/harmonium-companion/harmonium.sf2` — the original
+> upstream font, preserved (unmodified) as
+> `plugins/harmonium/soundfonts/harmonium_original.sf2` and formerly the
+> path compiled into the harmonium plugin via `HARMONIUM_SOUNDFONT_PATH`.
 
 Method: direct binary parse of the RIFF/sfbk container with
 `tests/scripts/sf2_audit.py` (pure Python, parses INFO/sdta/pdta chunks:

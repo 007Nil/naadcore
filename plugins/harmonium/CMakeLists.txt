@@ -16,13 +16,14 @@ add_library(harmonium_plugin SHARED
 )
 
 # SoundFont path (can be overridden via -DHARMONIUM_SOUNDFONT_PATH=... during cmake)
-# Default: the in-repo derived font (Phase 6) — portable, no machine-specific
-# paths. It carries preset 0 "harmonium" (identical to the original font),
-# preset 1 "harmonium double" (2-reed detuned layering) and preset 2
-# "key click" (the self-ending chiff layer used by the key_click config key;
-# see tests/scripts/derive_sf2.py and docs/HARMONIUM_SF2_AUDIT.md).
-# harmonium_v2.sf2 (Phase 3, without the click preset) is still committed
-# for comparability.
+# Default: the in-repo derived font (Phase 6) — portable, fully self-contained
+# (the plugin never reads a font outside this repository). It carries preset 0
+# "harmonium" (identical to the original font), preset 1 "harmonium double"
+# (2-reed detuned layering) and preset 2 "key click" (the self-ending chiff
+# layer used by the key_click config key; see tests/scripts/derive_sf2.py and
+# docs/HARMONIUM_SF2_AUDIT.md). harmonium_v2.sf2 (Phase 3, without the click
+# preset) and harmonium_original.sf2 (the committed upstream provenance copy,
+# input to derive_sf2.py) also live in soundfonts/ — see soundfonts/README.md.
 if(NOT HARMONIUM_SOUNDFONT_PATH)
     set(HARMONIUM_SOUNDFONT_PATH
         "${CMAKE_SOURCE_DIR}/plugins/harmonium/soundfonts/harmonium_v3.sf2")

@@ -27,7 +27,8 @@ OUT=$2
 MODE=${3:-phase1}
 # Default: the in-repo derived font (Phase 6; preset 0 = the original
 # sound). Override with HARMONIUM_SOUNDFONT=/path/to.sf2 for any other font
-# (e.g. the original /home/nil/harmonium-companion/harmonium.sf2).
+# (e.g. the committed provenance copy
+# plugins/harmonium/soundfonts/harmonium_original.sf2).
 REPO=$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)
 SF2=${HARMONIUM_SOUNDFONT:-$REPO/plugins/harmonium/soundfonts/harmonium_v3.sf2}
 

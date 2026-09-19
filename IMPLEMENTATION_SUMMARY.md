@@ -129,7 +129,9 @@ naadcore/
 ├── include/naadcore/               # Canonical headers: plugin.hpp, plugin_manager.hpp, midi.hpp
 ├── core/                           # Library sources: midi.cpp, plugin_manager.cpp
 ├── apps/naadcore-cli/              # CLI application (plugin loader)
-├── plugins/harmonium/              # Harmonium plugin + soundfonts/harmonium_v3.sf2
+├── plugins/harmonium/              # Harmonium plugin (self-contained; committed
+│   │                               #   fonts in soundfonts/: original + v2 + v3
+│   │                               #   default — see soundfonts/README.md)
 ├── tests/                          # Realism harness (tracks, renderers, analysis, tests)
 └── docs/                           # Architecture + plugin + config + audit documentation
 ```

@@ -118,6 +118,11 @@ naadcore/
 
 ### User Workflow (After Plugin System)
 
+> Note (2026-09-19, historical record): this workflow was the original
+> design sketch — there is no `--soundfont` flag in the shipped CLI;
+> SoundFonts are embedded in plugins at build time from the in-repo
+> `plugins/harmonium/soundfonts/` fonts (the plugin is self-contained).
+
 ```
 # Build plugins
 cd build && make

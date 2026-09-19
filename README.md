@@ -122,15 +122,18 @@ There is no `--soundfont` flag: SoundFonts are embedded in plugins at build time
 
 ### SoundFont embedding
 
-The harmonium plugin does not load a SoundFont from the command line. The path is
-compiled into the plugin via `HARMONIUM_SOUNDFONT_PATH` in
+The harmonium plugin is **self-contained**: every font it can load is
+committed in the repository under `plugins/harmonium/soundfonts/`
+(upstream provenance copy `harmonium_original.sf2` + derived fonts
+`harmonium_v2.sf2` / `harmonium_v3.sf2` — see
+`plugins/harmonium/soundfonts/README.md`). The path is compiled into the
+plugin via `HARMONIUM_SOUNDFONT_PATH` in
 `plugins/harmonium/CMakeLists.txt`. The default is the in-repo derived font
 `plugins/harmonium/soundfonts/harmonium_v3.sf2` (preset 0 "harmonium" —
 identical to the original font — preset 1 "harmonium double", the Phase 3
 detuned 2-reed stop, and preset 2 "key click", the Phase 6 self-ending
 chiff layer; see HANDOVER.md "Reed stops" and "Key click + micro-variation");
-override it at configure
-time (e.g. back to the original font):
+override it at configure time for a custom font:
 
 ```bash
 cmake -B build -DHARMONIUM_SOUNDFONT_PATH=/path/to/other.sf2
@@ -204,6 +207,8 @@ naadcore/
 │   └── main.cpp                    # Plugin loader + MIDI routing main loop
 ├── plugins/harmonium/              # Harmonium plugin (reference implementation)
 │   ├── CMakeLists.txt              # Embeds HARMONIUM_SOUNDFONT_PATH
+│   ├── soundfonts/                 # Committed fonts + provenance README
+│   │                               #   (harmonium_original/_v2/_v3.sf2)
 │   ├── harmonium_plugin.hpp
 │   └── harmonium_plugin.cpp        # Embedded FluidSynth synth, exports C factory functions
 ├── tests/                          # Realism test harness (T1–T7 tracks, render/capture

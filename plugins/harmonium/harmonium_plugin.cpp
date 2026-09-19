@@ -6,9 +6,14 @@
 #include <cstdio>
 #include <cstdlib>
 
-// The SoundFont path is embedded at compile time
+// The SoundFont path is embedded at compile time.
+// Fallback (only for builds that bypass CMake and therefore do not define
+// HARMONIUM_SOUNDFONT_PATH): the in-repo default font, relative to the
+// repository ROOT — non-CMake builds must run the plugin from the repo
+// root for this fallback to resolve. CMake builds pass the absolute path
+// instead, so this literal is compiled out there.
 #ifndef HARMONIUM_SOUNDFONT_PATH
-#define HARMONIUM_SOUNDFONT_PATH "/home/nil/harmonium-companion/harmonium.sf2"
+#define HARMONIUM_SOUNDFONT_PATH "plugins/harmonium/soundfonts/harmonium_v3.sf2"
 #endif
 
 namespace naadcore {

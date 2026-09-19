@@ -173,15 +173,19 @@ output to the requested path.
 ## Phase 3: derived SoundFont + reed stops (2026-09-19)
 
 `tests/scripts/derive_sf2.py` builds the in-repo double-reed font from the
-original (which is never modified):
+committed upstream copy `plugins/harmonium/soundfonts/harmonium_original.sf2`
+(which is never modified; that path is also the script's default input):
 
 ```bash
 python3 tests/scripts/derive_sf2.py \
-    /home/nil/harmonium-companion/harmonium.sf2 \
+    plugins/harmonium/soundfonts/harmonium_original.sf2 \
     plugins/harmonium/soundfonts/harmonium_v2.sf2 4 "harmonium double"
 ```
 
-- Args: `<in.sf2> <out.sf2> [detune_cents (default 4)] [preset_name] [--click]`.
+- Args: `[in.sf2] <out.sf2> [detune_cents (default 4)] [preset_name]
+  [--click]` — the input defaults to the in-repo provenance copy
+  `harmonium_original.sf2` (resolved from the script's own location, so it
+  works from any CWD).
 - The committed `plugins/harmonium/soundfonts/harmonium_v2.sf2` was generated
   with the defaults above (+4 cents). Preset 0 is byte-identical behavior to
   the original font; preset 1 duplicates every key zone with fineTune=+4.
@@ -200,7 +204,7 @@ build default) was generated with:
 
 ```bash
 python3 tests/scripts/derive_sf2.py \
-    /home/nil/harmonium-companion/harmonium.sf2 \
+    plugins/harmonium/soundfonts/harmonium_original.sf2 \
     plugins/harmonium/soundfonts/harmonium_v3.sf2 --click
 ```
 

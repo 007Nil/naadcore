@@ -11,7 +11,9 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLI="$ROOT/build/apps/naadcore-cli/naadcore-cli"
 PLUGINS_DIR="$ROOT/build/plugins"
-DEFAULT_SOUNDFONT="/home/nil/harmonium-companion/harmonium.sf2"
+# The harmonium plugin's build-time default font (committed in-repo; the
+# plugin is self-contained — no font outside the repository is needed).
+DEFAULT_SOUNDFONT="$ROOT/plugins/harmonium/soundfonts/harmonium_v3.sf2"
 
 C_G=$'\033[0;32m'; C_Y=$'\033[0;33m'; C_R=$'\033[0;31m'; C_B=$'\033[1;34m'; C_0=$'\033[0m'
 msg()  { printf '%s==>%s %s\n'  "$C_B" "$C_0" "$*"; }
@@ -294,8 +296,10 @@ main() {
   AUDIO_DEVICE="${AUDIO_DEVICE:-}"
   if [[ "$PLUGIN_PATH" == *harmonium* && ! -f "$DEFAULT_SOUNDFONT" ]]; then
     warn "SoundFont not found: $DEFAULT_SOUNDFONT"
-    warn "The harmonium plugin may fail to start. Override at configure time:"
-    warn "  cmake -B build -DHARMONIUM_SOUNDFONT_PATH=/path/to/harmonium.sf2"
+    warn "The harmonium plugin may fail to start (its build was configured"
+    warn "with a font other than the committed default). Override at configure"
+    warn "time or point the build back at the in-repo default:"
+    warn "  cmake -B build -DHARMONIUM_SOUNDFONT_PATH=$ROOT/plugins/harmonium/soundfonts/harmonium_v3.sf2"
   fi
   echo
   msg "Launching naadcore-cli (press Ctrl+C to quit)..."

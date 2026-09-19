@@ -25,7 +25,9 @@ naadcore/
 │   ├── CMakeLists.txt
 │   └── main.cpp                # CLI entry point, MIDI event routing
 ├── plugins/harmonium/          # Harmonium plugin (reference INaadPlugin implementation)
-│   ├── CMakeLists.txt          # Embeds HARMONIUM_SOUNDFONT_PATH
+│   ├── CMakeLists.txt          # Embeds HARMONIUM_SOUNDFONT_PATH (default: in-repo v3)
+│   ├── soundfonts/             # Committed fonts (original provenance + derivations)
+│   │                           #   + provenance README — the plugin is self-contained
 │   ├── harmonium_plugin.hpp
 │   └── harmonium_plugin.cpp
 └── docs/                       # This documentation directory

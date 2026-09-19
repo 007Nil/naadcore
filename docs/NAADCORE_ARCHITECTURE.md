@@ -115,9 +115,11 @@ The harmonium plugin is a reference implementation using FluidSynth:
 
 **SoundFont Embedding**:
 ```cmake
-# plugins/harmonium/CMakeLists.txt (actual mechanism)
+# plugins/harmonium/CMakeLists.txt (actual mechanism; default = the
+# committed in-repo font — the plugin is self-contained)
 if(NOT HARMONIUM_SOUNDFONT_PATH)
-    set(HARMONIUM_SOUNDFONT_PATH "/home/nil/harmonium-companion/harmonium.sf2")
+    set(HARMONIUM_SOUNDFONT_PATH
+        "${CMAKE_SOURCE_DIR}/plugins/harmonium/soundfonts/harmonium_v3.sf2")
 endif()
 
 target_compile_definitions(harmonium_plugin PRIVATE

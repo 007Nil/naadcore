@@ -9,10 +9,22 @@ audit questions: key coverage 36-84, velocity-to-filter/attack modulators,
 LFO vibrato, attack/release values.
 
 Usage: sf2_audit.py [path/to/harmonium.sf2]
+
+Default: the committed provenance copy of the upstream font,
+<repo>/plugins/harmonium/soundfonts/harmonium_original.sf2 (resolved
+relative to this script's own location, so the script works from any CWD).
 """
 
+import os
 import struct
 import sys
+
+# Default audit target: the in-repo provenance copy (see
+# plugins/harmonium/soundfonts/README.md).
+DEFAULT_SF2 = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))),
+    "plugins", "harmonium", "soundfonts", "harmonium_original.sf2")
 
 GEN = {
     0: "startAddrsOffset", 1: "endAddrsOffset", 2: "startloopAddrsOffset",
@@ -127,8 +139,7 @@ def mod_str(mod):
 
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else \
-        "/home/nil/harmonium-companion/harmonium.sf2"
+    path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SF2
     data = open(path, "rb").read()
     if data[:4] != b"RIFF" or data[8:12] != b"sfbk":
         raise SystemExit("not an SF2 (RIFF/sfbk) file")

@@ -278,9 +278,11 @@ When building a plugin, specify the SoundFont path:
 cmake -B build -DHARMONIUM_SOUNDFONT_PATH=/path/to/your/soundfont.sf2
 cmake --build build -j4
 
-# Or set it directly in the plugin's CMakeLists.txt (the actual mechanism):
+# Or set it directly in the plugin's CMakeLists.txt (the actual mechanism;
+# default = the committed in-repo font):
 if(NOT HARMONIUM_SOUNDFONT_PATH)
-    set(HARMONIUM_SOUNDFONT_PATH "/home/nil/harmonium-companion/harmonium.sf2")
+    set(HARMONIUM_SOUNDFONT_PATH
+        "${CMAKE_SOURCE_DIR}/plugins/harmonium/soundfonts/harmonium_v3.sf2")
 endif()
 
 target_compile_definitions(harmonium_plugin PRIVATE
@@ -290,7 +292,12 @@ target_compile_definitions(harmonium_plugin PRIVATE
 
 #### Default SoundFont Path
 
-The harmonium plugin expects the SoundFont at `/home/nil/harmonium-companion/harmonium.sf2` by default. Create this path or specify a custom path during build.
+The harmonium plugin is self-contained: its default font is committed in
+the repository at `plugins/harmonium/soundfonts/harmonium_v3.sf2` (along
+with the earlier derivation `harmonium_v2.sf2` and the upstream
+provenance copy `harmonium_original.sf2` — see
+`plugins/harmonium/soundfonts/README.md`). No font outside the repo is
+needed; specify a custom path during build only for non-default fonts.
 
 ## Building the Harmonium Plugin
 

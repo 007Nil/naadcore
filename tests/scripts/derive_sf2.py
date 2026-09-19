@@ -51,17 +51,23 @@ fineTune), 53=GEN_SAMPLEID, 54=GEN_SAMPLEMODES,
 timecents, sustain in cB attenuation).
 
 Usage:
-  derive_sf2.py <original.sf2> <output.sf2> [detune_cents] [preset_name]
+  derive_sf2.py [original.sf2] <output.sf2> [detune_cents] [preset_name]
                 [--click]
+
+The input font defaults to the in-repo provenance copy
+<repo>/plugins/harmonium/soundfonts/harmonium_original.sf2 (resolved
+relative to this script's own location, so the script works from any CWD);
+pass a path explicitly to derive from a different font.
 
 Defaults: detune_cents=4, preset_name="harmonium double".
 
   # v2 (Phase 3, exactly as committed):
-  derive_sf2.py original.sf2 harmonium_v2.sf2
+  derive_sf2.py harmonium_v2.sf2
   # v3 (Phase 6):
-  derive_sf2.py original.sf2 harmonium_v3.sf2 --click
+  derive_sf2.py harmonium_v3.sf2 --click
 """
 
+import os
 import struct
 import sys
 
@@ -208,14 +214,27 @@ def zone_key(op):
     return (0 if op in (GEN_KEYRANGE, GEN_VELRANGE) else 1, op)
 
 
+# Default provenance input: the committed copy of the upstream font, next
+# to the plugin (the plugin is self-contained; nothing outside the repo is
+# read). Resolved from this script's location, not the CWD.
+DEFAULT_SRC = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))),
+    "plugins", "harmonium", "soundfonts", "harmonium_original.sf2")
+
+
 def main():
     args = [a for a in sys.argv[1:] if a != "--click"]
     click_mode = "--click" in sys.argv[1:]
-    if len(args) < 2:
+    if len(args) < 1 or len(args) > 4:
         print(__doc__)
         sys.exit(1)
-    src_path = args[0]
-    dst_path = args[1]
+    if len(args) == 1:
+        src_path = DEFAULT_SRC      # in-repo provenance copy
+        dst_path = args[0]
+    else:
+        src_path = args[0]          # explicit input override
+        dst_path = args[1]
     detune = float(args[2]) if len(args) > 2 else 4.0
     if not -99.0 <= detune <= 99.0:
         raise SystemExit("detune cents must be within the SF2 spec range "

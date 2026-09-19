@@ -104,11 +104,13 @@ All plugins must implement:
 ## SoundFont Embedding
 
 The SoundFont path is a compile-time constant (actual mechanism from
-`plugins/harmonium/CMakeLists.txt`):
+`plugins/harmonium/CMakeLists.txt`; the default is the committed in-repo
+derived font, so the plugin is self-contained):
 
 ```cmake
 if(NOT HARMONIUM_SOUNDFONT_PATH)
-    set(HARMONIUM_SOUNDFONT_PATH "/home/nil/harmonium-companion/harmonium.sf2")
+    set(HARMONIUM_SOUNDFONT_PATH
+        "${CMAKE_SOURCE_DIR}/plugins/harmonium/soundfonts/harmonium_v3.sf2")
 endif()
 
 target_compile_definitions(harmonium_plugin PRIVATE
