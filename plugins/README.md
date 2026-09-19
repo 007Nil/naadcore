@@ -7,13 +7,26 @@ For detailed plugin development guidance, see `docs/PLUGIN_DEVELOPMENT.md`.
 ## Available Plugins
 
 ### harmonium/
-The harmonium plugin provides a FluidSynth-based harmonium synthesizer with an embedded SoundFont.
+The harmonium plugin provides a FluidSynth-based harmonium synthesizer with an embedded SoundFont. It includes harmonium-specific features: bellows velocity model, reed stops (single/double detuned), octave coupler, sub-octave, drone fixture, key click (chiff), and per-note micro-variation.
 
 **Build Output**: `libharmonium_plugin.so` in `build/plugins/`
 
 **Usage** (from the project root):
 ```bash
 ./build/apps/naadcore-cli/naadcore-cli --plugin ./build/plugins/libharmonium_plugin.so --midi 20:0
+```
+
+### piano/
+The piano plugin provides a FluidSynth-based grand piano instrument using the
+Salamander Grand Piano Lite SoundFont (CC BY 3.0, SF2 format). Standard piano
+behavior: velocity-sensitive note-on, standard note-off, no harmonium-specific
+features.
+
+**Build Output**: `libpiano_plugin.so` in `build/plugins/`
+
+**Usage** (from the project root):
+```bash
+./build/apps/naadcore-cli/naadcore-cli --plugin ./build/plugins/libpiano_plugin.so --midi 20:0
 ```
 
 ## Adding New Plugins

@@ -1,25 +1,23 @@
 # NaadCore Handover — Authoritative State Document
 
 Last updated: 2026-09-19 (harmonium realism Phases 0–6 COMPLETE +
-**Phase A: audio OUTPUT DEVICE selection** — `--audio-device` CLI flag →
-PluginManager → pre-init `set_config("audio_device")` → plugin maps it per
-driver into FluidSynth settings; well-known environment keys convention
-formalized in docs; **Phase B: launcher audio-device menu** — `naadcore.sh`
-gained a driver-dependent `choose_device` step (alsa PCMs / PulseAudio sinks /
-pipewire skip) with a plugin-default skip entry as the EOF-safety default;
-**Self-contained plugin: the upstream SoundFont is now committed in-repo**
-(`plugins/harmonium/soundfonts/harmonium_original.sf2` — provenance/derivation
-input; the build, the plugin fallback and every script/doc reference the
-in-repo fonts only — the former external path
-`/home/nil/harmonium-companion/harmonium.sf2` is retired everywhere)
+**Phase A: audio OUTPUT DEVICE selection** + **Phase B: launcher audio-device
+menu** + **Piano plugin** — new `piano` plugin using the Salamander Grand
+Piano Lite SF2 (CC BY 3.0) via the exact same plugin architecture)
 
 ## Project purpose
 
 NaadCore is a Linux-native harmonium synthesizer built as a modular, plugin-based
 framework. A MIDI keyboard (Alesis Q49 on ALSA sequencer port 20:0) drives
-dynamically loaded instrument plugins; the first and currently only plugin is the
-FluidSynth-based harmonium. Goal: press Q49 keys → hear a velocity-sensitive,
-polyphonic harmonium through ALSA audio.
+dynamically loaded instrument plugins; the available plugins are:
+
+- **harmonium** (`libharmonium_plugin.so`) — FluidSynth-based harmonium with
+  reed stops, bellows velocity model, drone fixture, key click, and micro-variation
+- **piano** (`libpiano_plugin.so`) — FluidSynth-based grand piano using the
+  Salamander Grand Piano Lite SoundFont (CC BY 3.0)
+
+Goal: press Q49 keys → hear a velocity-sensitive, polyphonic instrument through
+ALSA audio (harmonium or piano, selected at launch).
 
 ## Current architecture (validated end-to-end)
 
@@ -35,14 +33,17 @@ PluginManager (core/plugin_manager.cpp, header include/naadcore/plugin_manager.h
   - singleton; dlopen(RTLD_NOW | RTLD_LOCAL) + dlsym on plugin .so
   - lifecycle: load → init → start_audio → route_midi_event* → stop/cleanup
         ↓
-libharmonium_plugin.so (plugins/harmonium/)
-  - implements INaadPlugin
-  - owns its own FluidSynth settings/synth/audio-driver
-  - SoundFont path compiled in (embedded at build time; default is the
-    in-repo derived font, see "Reed stops (Phase 3)")
+libharmonium_plugin.so  |  libpiano_plugin.so  (one or the other, selected by --plugin)
+  - implements INaadPlugin  |  implements INaadPlugin
+  - owns its own FluidSynth |  owns its own FluidSynth
+  - harmonium_v3.sf2        |  SalamanderGrandLite.sf2
         ↓
-FluidSynth + plugins/harmonium/soundfonts/harmonium_v3.sf2 → ALSA audio → speakers
+FluidSynth + SoundFont → ALSA audio → speakers
 ```
+
+Each plugin is **fully self-contained**: the SoundFont it needs is committed
+in-repo, the path is compiled in at build time, and the plugin never reads a
+file outside the repository.
 
 The CLI registers with ALSA under the client name **`naadcore`** and creates a
 write-capable input port ("naadcore input") that subscribes to the Q49 port at
@@ -52,7 +53,7 @@ startup — no manual `aconnect` needed.
 
 ```
 naadcore/
-├── CMakeLists.txt                  # Root build — exactly 3 targets (see below)
+├── CMakeLists.txt                  # Root build — 4 targets (see below)
 ├── naadcore.sh                     # Interactive launcher: build → MIDI scan/menu
 │                                   #   → plugin menu → driver menu → device menu
 │                                   #   (Phase B) → run CLI
@@ -73,24 +74,32 @@ naadcore/
 │   └── main.cpp                    # Arg parsing (--plugin/--midi/--audio-driver/--audio-device/--help), MIDI routing loop
 ├── plugins/
 │   ├── README.md                   # Plugin directory overview
-│   └── harmonium/                   # Plugin target: harmonium_plugin
-│       ├── CMakeLists.txt          # Embeds HARMONIUM_SOUNDFONT_PATH (default:
-│       │                           #   in-repo harmonium_v3.sf2), outputs to build/plugins/
+│   ├── harmonium/                   # Plugin target: harmonium_plugin
+│   │   ├── CMakeLists.txt          # Embeds HARMONIUM_SOUNDFONT_PATH (default:
+│   │   │                           #   in-repo harmonium_v3.sf2), outputs to build/plugins/
+│   │   ├── soundfonts/
+│   │   │   ├── README.md             # Provenance: what each font is, the
+│   │   │   │                         #   checksum, the derivation chain
+│   │   │   ├── harmonium_original.sf2 # Committed upstream provenance copy
+│   │   │   │                         #   (byte-identical to the original
+│   │   │   │                         #   font; derive_sf2.py's default input)
+│   │   │   ├── harmonium_v3.sf2    # Derived font (Phase 6, committed, DEFAULT):
+│   │   │   │                       #   presets 0 "harmonium" (byte-identical to
+│   │   │   │                       #   the original) + 1 "harmonium double"
+│   │   │   │                       #   (+4¢ zones) + 2 "key click" (self-ending
+│   │   │   │                       #   chiff instrument + synthesized sample)
+│   │   │   └── harmonium_v2.sf2    # Derived font (Phase 3, committed, kept for
+│   │   │                           #   comparability): presets 0/1 only
+│   │   ├── harmonium_plugin.hpp
+│   │   └── harmonium_plugin.cpp     # FluidSynth plugin + extern "C" factories
+│   └── piano/                       # Plugin target: piano_plugin
+│       ├── CMakeLists.txt          # Embeds PIANO_SOUNDFONT_PATH (default:
+│       │                           #   in-repo SalamanderGrandLite.sf2)
 │       ├── soundfonts/
-│       │   ├── README.md             # Provenance: what each font is, the
-│       │   │                         #   checksum, the derivation chain
-│       │   ├── harmonium_original.sf2 # Committed upstream provenance copy
-│       │   │                         #   (byte-identical to the original
-│       │   │                         #   font; derive_sf2.py's default input)
-│       │   ├── harmonium_v3.sf2    # Derived font (Phase 6, committed, DEFAULT):
-│       │   │                       #   presets 0 "harmonium" (byte-identical to
-│       │   │                       #   the original) + 1 "harmonium double"
-│       │   │                       #   (+4¢ zones) + 2 "key click" (self-ending
-│       │   │                       #   chiff instrument + synthesized sample)
-│       │   └── harmonium_v2.sf2    # Derived font (Phase 3, committed, kept for
-│       │                           #   comparability): presets 0/1 only
-│       ├── harmonium_plugin.hpp
-│       └── harmonium_plugin.cpp     # FluidSynth plugin + extern "C" factories
+│       │   ├── README.md             # Source, license (CC BY 3.0), format audit
+│       │   └── SalamanderGrandLite.sf2  # ~184 MB, SF2 conversion of SFZ
+│       ├── piano_plugin.hpp
+│       └── piano_plugin.cpp         # FluidSynth plugin + extern "C" factories
 ├── tests/                          # Realism test harness (re-added with content)
 │   ├── README.md                   # Harness guide, tool status, capture paths
 │   ├── RESULTS.md                  # A/B score sheet + objective measurements
@@ -142,12 +151,13 @@ cmake -B build
 cmake --build build -j4
 ```
 
-Exactly 3 targets:
+Exactly 4 targets:
 
 | Target | Type | Output |
 |---|---|---|
 | `naadcore_core` | SHARED lib | `build/libnaadcore_core.so` |
 | `harmonium_plugin` | SHARED lib (plugin) | `build/plugins/libharmonium_plugin.so` |
+| `piano_plugin` | SHARED lib (plugin) | `build/plugins/libpiano_plugin.so` |
 | `naadcore-cli` | executable | `build/apps/naadcore-cli/naadcore-cli` |
 
 All includes use the `"naadcore/..."` form and resolve via `include/`; no
@@ -396,6 +406,66 @@ repository is ever read):
   path" limitation is **resolved**.
 - Override for custom builds: `cmake -B build -DHARMONIUM_SOUNDFONT_PATH=/path/to.sf2`
   (or at runtime via the `soundfont_path` config key before `init()`).
+
+## Piano plugin
+
+New plugin: `piano` (`libpiano_plugin.so`, `plugins/piano/`). A simple
+FluidSynth-based grand piano instrument — **standard piano behavior**:
+velocity-sensitive note-on, standard note-off, no harmonium-specific features
+(no bellows model, no reed stops, no drones, no key-click, no micro-variation).
+
+**SoundFont**: `plugins/piano/soundfonts/SalamanderGrandLite.sf2` (~184 MB),
+SF2 conversion of the *Salamander Grand Piano V3 Lite* (Yamaha C5, Slender
+Edition 2017). License: **CC BY 3.0** (same as the original). See
+`plugins/piano/soundfonts/README.md` for provenance details.
+
+FluidSynth 2.4.8 on this Debian system does **not** support SFZ; the original
+Salamander Grand Piano is distributed only in SFZ format. The SF2 conversion
+(from GitHub release at
+<https://github.com/VimHater/SalamanderGrandLite_sf2/releases/tag/0.1>) is
+loaded via `fluid_synth_sfload()` — the **same mechanism** as the harmonium
+plugin.
+
+**Plugin behavior**:
+- `handle_midi_event()`: standard note-on (velocity → FluidSynth noteon),
+  note-off (FluidSynth noteoff), CC 123 (All Notes Off → all 16 channels),
+  pitch-bend, program change (forwarded — allows switching piano presets
+  if the SoundFont has multiple), channel pressure, key pressure.
+- **No** bellows velocity model, **no** layer router, **no** internal
+  channels. Each NoteOn produces exactly one voice on the incoming MIDI
+  channel.
+- Config keys: `soundfont_path`, `audio_driver`, `audio_device` (the
+  well-known pre-init keys). Other keys return `PLUGIN_NOT_IMPLEMENTED`.
+
+**Build**: mirrors the harmonium CMake structure exactly. Output:
+`build/plugins/libpiano_plugin.so` (59 KB). The SF2 path is compiled in via
+`PIANO_SOUNDFONT_PATH`; override with `-DPIANO_SOUNDFONT_PATH=...`.
+
+**Run**:
+```bash
+./build/apps/naadcore-cli/naadcore-cli \
+    --plugin ./build/plugins/libpiano_plugin.so \
+    --midi 20:0
+```
+
+Expected log excerpt:
+```
+Loading plugin: ./build/plugins/libpiano_plugin.so
+Synth audio: driver=alsa device=default
+Synth voicing: gain=0.5 reverb=on chorus=off interp=4th-order
+Loaded SoundFont: .../plugins/piano/soundfonts/SalamanderGrandLite.sf2 (ID: 1)
+Loaded plugin: piano v1.0.0 (./build/plugins/libpiano_plugin.so)
+Plugin: piano v1.0.0
+Starting audio...
+Audio driver started: alsa
+```
+
+**Configuration**:
+| Key | Default | Effect |
+|---|---|---|
+| `soundfont_path` | compiled-in SF2 path | override the SoundFont at runtime |
+| `audio_driver` | "alsa" | FluidSynth audio driver |
+| `audio_device` | "" (unset) | per-driver audio device (applied pre-init) |
 
 ## Uniform Bellows Velocity (harmonium plugin)
 
