@@ -298,6 +298,25 @@ void HarmoniumPlugin::apply_coupler_detune() {
     }
 }
 
+bool HarmoniumPlugin::set_coupler_state(bool on) {
+    if (coupler_on_ == on) {
+        return true; // Already in the desired state
+    }
+    
+    coupler_on_ = on;
+    
+    // If turning off, release all existing coupler voices
+    if (!on) {
+        set_layer_for_all_held(kLayerCoupler, false);
+    }
+    
+    return true;
+}
+
+bool HarmoniumPlugin::get_coupler_state() const {
+    return coupler_on_;
+}
+
 bool HarmoniumPlugin::parse_drone_spec(const std::string& value,
                                        std::vector<uint8_t>& out) {
     out.clear();
@@ -757,6 +776,10 @@ std::string HarmoniumPlugin::get_config(const char* key) {
     if (k == "sub_octave") {
         return sub_octave_on_ ? "on" : "off";
     }
+    if (k == "status") {
+        // Return current state in a readable format
+        return coupler_on_ ? "on" : "off";
+    }
     if (k == "drone") {
         return drone_spec_;
     }
@@ -915,9 +938,16 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
         flag = on;
         if (synth_ && changed) {
             set_layer_for_all_held(is_coupler ? kLayerCoupler
-                                              : kLayerSubOctave,
-                                   on);
+                                               : kLayerSubOctave,
+                                    on);
         }
+        return PLUGIN_OK;
+    }
+    
+    // Status command - return the current state
+    if (k == "status") {
+        // This is a special case - status command returns current state
+        // but doesn't change it. We'll handle this in the CLI layer
         return PLUGIN_OK;
     }
 

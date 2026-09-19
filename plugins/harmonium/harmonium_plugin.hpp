@@ -108,6 +108,10 @@ private:
 
     bool coupler_on_ = false;
     bool sub_octave_on_ = false;
+    
+    // Coupler commands (runtime toggle)
+    bool set_coupler_state(bool on);
+    bool get_coupler_state() const;
 
     // Drone (Phase 5). A drone is a FIXTURE: sustained notes that sound
     // continuously under the melody, like a real harmonium's drone knobs —
