@@ -31,6 +31,10 @@ tests/
 │   ├── sf2_audit.py       # SF2 binary structure dump (Phase 1 audit)
 │   └── run_config_tests.sh# compiles+runs test_plugin_config.cpp (ad hoc,
 │                          #   not wired into the project CMake build)
+├── e2e_cli_coupler.sh    # E2E: CLI runtime coupler (stdin commands → plugin;
+│                          #   wipes ./build and rebuilds first, asserts the
+│                          #   exact coupler output sequence, EOF-alive
+│                          #   behavior, and banner-vs-HEAD build id)
 ├── analyze.py             # numpy WAV analysis (onset/release/AM/peak/RMS)
 ├── test_plugin_config.cpp # config-seam tests (gain/reverb/chorus +
 │                          #   attack_ms/release_ms + stop + coupler/
@@ -347,6 +351,27 @@ CC 123 floor) are in tests/RESULTS.md. Line-level measurement used ad-hoc
 numpy carrier-line FFTs (Hanning window, ±2 Hz line windows) on the raw
 waveform — the same technique as the Phase 3 beat table.
 
+
+## CLI runtime coupler E2E harness (2026-09-19)
+
+`bash tests/e2e_cli_coupler.sh` (runs from anywhere; resolves the repo root
+from its own location):
+
+1. `rm -rf build` + cmake configure + full rebuild — it never tests a
+   stale binary.
+2. Pipes `status / coupler on / status / coupler off / status` into the
+   real CLI + real plugin (`--audio-driver file`, no hardware needed) under
+   `timeout 10`, then asserts the lines `Coupler: off` → `Coupler ON` →
+   `Coupler: on` → `Coupler OFF` → `Coupler: off` appear in order AND the
+   process was killed by timeout (exit 124), not self-exiting.
+3. Runs the CLI with `</dev/null` stdin: the EOF message
+   (`stdin closed (EOF) - CLI commands disabled, Ctrl+C to exit`) must
+   print exactly once and the process must stay alive until the timeout
+   kill (no busy-spin, no exit).
+4. Sanity: the `naadcore-cli build <id>` startup banner's commit id must
+   equal `git rev-parse --short HEAD`.
+
+Passes all checks as of 2026-09-19 (build id 4ce9f50).
 
 ## Reference-clip workflow
 

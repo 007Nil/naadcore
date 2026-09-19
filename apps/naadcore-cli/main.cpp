@@ -258,12 +258,54 @@ int NaadCoreCLI::run() {
     int stdin_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
     fcntl(STDIN_FILENO, F_SETFL, stdin_flags | O_NONBLOCK);
     
+    // Stdin command state: partial lines are buffered across read() calls so
+    // a command without a trailing newline still works once more bytes (or
+    // EOF) arrive. After EOF we stop selecting on stdin entirely (otherwise
+    // select() would report it readable forever and busy-spin the loop).
+    bool stdin_open = true;
+    std::string stdin_pending;
+    
+    // Trim leading/trailing whitespace from a command line
+    auto trim = [](std::string s) {
+        s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }));
+        s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }).base(), s.end());
+        return s;
+    };
+    
+    // Process every complete line currently in the pending buffer
+    auto process_pending_lines = [&](bool flush_residual) {
+        size_t pos = 0;
+        size_t newline_pos;
+        while ((newline_pos = stdin_pending.find('\n', pos)) != std::string::npos) {
+            std::string command = trim(stdin_pending.substr(pos, newline_pos - pos));
+            if (!command.empty()) {
+                handle_stdin_command(pm, command);
+            }
+            pos = newline_pos + 1;
+        }
+        // Keep the unfinished tail; on EOF flush it as a final command
+        stdin_pending.erase(0, pos);
+        if (flush_residual) {
+            std::string command = trim(stdin_pending);
+            if (!command.empty()) {
+                handle_stdin_command(pm, command);
+            }
+            stdin_pending.clear();
+        }
+    };
+    
     // Main loop - process MIDI events and stdin commands
     while (running_flag) {
         // Create fd_set for select()
         fd_set read_fds;
         FD_ZERO(&read_fds);
-        FD_SET(STDIN_FILENO, &read_fds);
+        if (stdin_open) {
+            FD_SET(STDIN_FILENO, &read_fds);
+        }
         
         int max_fd = STDIN_FILENO;
         if (!midi_input_str_.empty()) {
@@ -288,34 +330,25 @@ int NaadCoreCLI::run() {
         }
         
         // Check for stdin activity
-        if (FD_ISSET(STDIN_FILENO, &read_fds)) {
+        if (stdin_open && FD_ISSET(STDIN_FILENO, &read_fds)) {
             char buffer[1024];
-            ssize_t bytes_read = read(STDIN_FILENO, buffer, sizeof(buffer) - 1);
+            ssize_t bytes_read = read(STDIN_FILENO, buffer, sizeof(buffer));
             
             if (bytes_read > 0) {
-                buffer[bytes_read] = '\0';
-                std::string input(buffer);
-                
-                // Process complete lines
-                size_t pos = 0;
-                size_t newline_pos;
-                
-                while ((newline_pos = input.find('\n', pos)) != std::string::npos) {
-                    std::string command = input.substr(pos, newline_pos - pos);
-                    // Remove leading/trailing whitespace
-                    command.erase(command.begin(), std::find_if(command.begin(), command.end(), [](unsigned char ch) {
-                        return !std::isspace(ch);
-                    }));
-                    command.erase(std::find_if(command.rbegin(), command.rend(), [](unsigned char ch) {
-                        return !std::isspace(ch);
-                    }).base(), command.end());
-                    
-                    if (!command.empty()) {
-                        handle_stdin_command(pm, command);
-                    }
-                    pos = newline_pos + 1;
-                }
+                // Append raw bytes; a command executes only when a '\n'
+                // arrives (partial lines are buffered across read() calls)
+                stdin_pending.append(buffer, static_cast<size_t>(bytes_read));
+                process_pending_lines(false);
+            } else if (bytes_read == 0) {
+                // EOF: print once, flush any residual non-empty line as a
+                // final command, and stop selecting on stdin (a closed fd
+                // is permanently "readable" — selecting on it would
+                // busy-spin the loop)
+                std::cout << "stdin closed (EOF) - CLI commands disabled, Ctrl+C to exit" << std::endl;
+                process_pending_lines(true);
+                stdin_open = false;
             }
+            // bytes_read < 0: EAGAIN/EINTR (non-blocking fd) — retry next iteration
         }
         
         // Process MIDI events if configured
@@ -401,6 +434,11 @@ void NaadCoreCLI::handle_stdin_command(PluginManager& pm, const std::string& com
 // ============================================================================
 
 int main(int argc, char* argv[]) {
+    // Build identifier banner — lets a stale binary be detected at a glance
+    // (NAADCORE_BUILD_ID = short commit hash + configure date, set at CMake
+    // configure time in apps/naadcore-cli/CMakeLists.txt).
+    std::cout << "naadcore-cli build " NAADCORE_BUILD_ID << std::endl;
+
     naadcore::NaadCoreCLI cli;
     
     if (!cli.parse_args(argc, argv)) {

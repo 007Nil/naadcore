@@ -131,8 +131,10 @@ Manual fix: cd $ROOT && git lfs install && git lfs pull"
 # ---------------------------------------------------------------- build
 build_step() {
   if [[ -x "$CLI" ]]; then
-    read -rp "CLI already built. Rebuild? [y/N] " a
-    case "$a" in Y|y) ;; *) ok "Using existing build."; return 0 ;; esac
+    # Default is YES: running a stale binary caused a long debugging loop
+    # once (new source, old ./build). Only an explicit "n" skips the rebuild.
+    read -rp "CLI already built. Rebuild? [Y/n] " a
+    case "$a" in N|n) ok "Using existing build."; return 0 ;; esac
   else
     msg "CLI not built yet - building."
   fi

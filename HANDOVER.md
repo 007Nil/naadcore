@@ -2,10 +2,11 @@
 
 Last updated: 2026-09-19 (harmonium realism Phases 0–6 COMPLETE +
 **Phase A: audio OUTPUT DEVICE selection** + **Phase B: launcher audio-device
-menu** + **Piano plugin** — new `piano` plugin via the exact same plugin
-architecture; piano font swapped to GeneralUser GS 1.44 (~30 MB, royalty-free)
-after the Salamander Lite SF2 was diagnosed as defective (broadband click
-baked into every note onset))
+menu** + **Piano plugin** + **CLI runtime coupler hardening** — EOF/partial-
+line stdin handling, build-id banner, e2e coupler harness, launcher rebuild
+default flipped to Y; see "CLI runtime coupler" below. Piano font:
+GeneralUser GS 1.44 (~30 MB, royalty-free) after the Salamander Lite SF2 was
+diagnosed as defective (broadband click baked into every note onset)
 
 ## Project purpose
 
@@ -103,6 +104,9 @@ naadcore/
 │       ├── piano_plugin.hpp
 │       └── piano_plugin.cpp         # FluidSynth plugin + extern "C" factories
 ├── tests/                          # Realism test harness (re-added with content)
+│   ├── e2e_cli_coupler.sh          # E2E: CLI runtime coupler via stdin (wipes
+│   │                               #   ./build, rebuilds, asserts coupler
+│   │                               #   sequence + EOF behavior + build id)
 │   ├── README.md                   # Harness guide, tool status, capture paths
 │   ├── RESULTS.md                  # A/B score sheet + objective measurements
 │   ├── analyze.py                  # WAV analysis (onset/release/AM/peak/RMS)
@@ -744,6 +748,51 @@ document any multi-channel controller use).
 - Startup log line: `Synth layers: coupler=off sub_octave=off (ch15=note+12
   CC7=60, ch14=note-12 CC7=40)`, followed since Phase 5 by
   `Synth drone: off (ch13 CC7=45 vel=100)`.
+
+## CLI runtime coupler (2026-09-19)
+
+The CLI (`apps/naadcore-cli/main.cpp`) reads commands from stdin in its
+select() loop and drives the plugin's `coupler` config key at runtime —
+verified end-to-end against the real plugin (FluidSynth "file" audio
+driver, no keyboard needed):
+
+| Command | Effect |
+|---|---|
+| `status` | prints `Coupler: on/off` (current plugin state) |
+| `coupler on` | sets `coupler=on` live → prints `Coupler ON` (starts ch15 layer voices on held notes) |
+| `coupler off` | sets `coupler=off` live → prints `Coupler OFF` (releases ch15 layer voices) |
+
+Default state is the plugin's **off**. The runtime toggle works because
+the Phase 4 layer router implements live mid-phrase toggles: `set_config
+("coupler", "on|off")` starts/releases the octave layer for every currently
+held note at its stored `sounding_velocity` — no re-init, bellows untouched.
+
+CLI stdin hardening shipped with it:
+- **EOF handling** — on stdin EOF the CLI prints `stdin closed (EOF) - CLI
+  commands disabled, Ctrl+C to exit` once and stops selecting on stdin (a
+  closed fd is permanently "readable"; selecting on it busy-spins). The
+  process stays alive for MIDI/Ctrl+C.
+- **Partial-line safety** — stdin bytes are buffered across read() calls in
+  a `std::string`; a command executes only when a `\n` arrives, and EOF
+  flushes a residual non-empty line as a final command (so
+  `printf 'coupler on'` without a trailing newline works).
+- **Build-id banner** — startup prints `naadcore-cli build <shorthash>
+  <configure-date>` (NAADCORE_BUILD_ID, set in
+  apps/naadcore-cli/CMakeLists.txt from `git rev-parse --short HEAD`,
+  fallback "unknown" without git) so a stale binary is visible at a glance.
+  Root cause of the original "coupler doesn't work" report: testing against
+  a stale build with the rebuild prompt defaulting to No — the code was
+  already correct.
+
+E2E harness (wipes ./build, rebuilds, and asserts the exact coupler
+sequence, EOF behavior, and banner-vs-HEAD identity):
+
+```bash
+bash tests/e2e_cli_coupler.sh
+```
+
+Related: `naadcore.sh`'s rebuild prompt now defaults to **Y** ("Rebuild?
+[Y/n]") — Enter rebuilds, so the stale-binary trap can't recur silently.
 
 ## Drone (unpika) + config-key registry (Phase 5, 2026-09-19)
 
