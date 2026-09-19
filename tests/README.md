@@ -145,8 +145,9 @@ device (`hw:`/`plughw:`) passed to the CLI bypasses PipeWire entirely, so
 no sink-input appears in the PipeWire graph and `parecord
 --monitor-stream` capture (capture_live.sh) cannot see the stream — for
 captures either omit `--audio-device`, use `default`, or use the
-pulseaudio driver with the sink name. (Phase B pending: the launcher's
-device menu — for now `--audio-device` is CLI-flag only.)
+pulseaudio driver with the sink name. (Since Phase B the launcher's device
+menu warns about exactly this when offering its hw:/plughw: options — for
+captures pick `default` there too.)
 
 ## Plugin-in-loop offline rendering (Phase 2, 2026-09-18)
 

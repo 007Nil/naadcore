@@ -3,7 +3,9 @@
 #   1) build the CLI and plugins (if needed)
 #   2) detect ALSA MIDI sources and let the user pick one
 #   3) detect built plugins and let the user pick one
-#   4) pick an audio driver, then launch naadcore-cli
+#   4) pick an audio driver
+#   5) pick an audio output device (driver-dependent; skippable), then
+#      launch naadcore-cli
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,10 +22,10 @@ die()  { err "$*"; exit 1; }
 
 banner() {
 cat <<EOF
-${C_B}+-------------------------------------------+
-|   NaadCore - interactive launcher         |
-|   build -> MIDI -> plugin -> play         |
-+-------------------------------------------+${C_0}
+${C_B}+-------------------------------------------------------+
+|   NaadCore - interactive launcher                     |
+|   build -> MIDI -> plugin -> driver -> device -> play |
++-------------------------------------------------------+${C_0}
 EOF
 }
 
@@ -141,6 +143,144 @@ choose_driver() {
   AUDIO_DRIVER="${AUDIO_DRIVER:-alsa}"   # EOF safety: default
 }
 
+# ---------------------------------------------------------------- device
+# Audio OUTPUT DEVICE step (Phase B). Driver-dependent:
+#   alsa       -> default + hardware devices (aplay -l) + PCM names (aplay -L)
+#   pulseaudio -> default + sinks (pactl list sinks / list short sinks)
+#   pipewire   -> skipped (FluidSynth's pipewire driver has no device setting)
+# The final "Use plugin default" entry is also the EOF-safety default, and
+# "default" is passed as NO flag (plugin default == default for these drivers).
+scan_alsa_devices() {
+  DEV_NAMES=(); DEV_LABELS=()
+  local line cid cname dnum dname
+  while IFS= read -r line; do
+    if [[ $line =~ ^card\ [0-9]+:\ ([^,\[]+)\ \[([^\]]*)\],\ device\ ([0-9]+):\ ([^,\[]+)\ \[([^\]]*)\] ]]; then
+      cid="${BASH_REMATCH[1]}"; cname="${BASH_REMATCH[2]}"
+      dnum="${BASH_REMATCH[3]}"; dname="${BASH_REMATCH[5]}"
+      ((${#DEV_NAMES[@]} >= 12)) && continue   # cap the list sensibly
+      DEV_NAMES+=("plughw:CARD=$cid,DEV=$dnum")
+      DEV_LABELS+=("$(printf '%-24s %s [dev %s: %s] (converted)' \
+        "plughw:CARD=$cid,DEV=$dnum" "$cname" "$dnum" "$dname")")
+      DEV_NAMES+=("hw:CARD=$cid,DEV=$dnum")
+      DEV_LABELS+=("$(printf '%-24s %s [dev %s: %s] (raw/exclusive)' \
+        "hw:CARD=$cid,DEV=$dnum" "$cname" "$dnum" "$dname")")
+    fi
+  done < <(aplay -l 2>/dev/null)
+}
+
+scan_alsa_pcms() {
+  local line name="" desc
+  while IFS= read -r line; do
+    if [[ $line =~ ^(sysdefault|plughw|front|iec958|hdmi): ]]; then
+      name="$line"; desc=""
+    elif [[ -n "$name" && $line =~ ^[[:space:]]+([^[:space:]].*) ]]; then
+      desc="${BASH_REMATCH[1]}"
+      if [[ ! " ${DEV_NAMES[*]} " == *" $name "* ]] && ((${#DEV_NAMES[@]} < 12)); then
+        DEV_NAMES+=("$name")
+        DEV_LABELS+=("$(printf '%-24s %s (ALSA PCM)' "$name" "$desc")")
+      fi
+      name=""   # only the first indented line describes this PCM
+    fi
+  done < <(aplay -L 2>/dev/null)
+}
+
+scan_pulse_sinks() {
+  PULSE_NAMES=(); PULSE_LABELS=()
+  local line name="" desc idx pname
+  while IFS= read -r line; do
+    if [[ $line =~ ^[[:space:]]*Name:\ ([^[:space:]].*) ]]; then
+      name="${BASH_REMATCH[1]}"; desc=""
+    elif [[ $line =~ ^[[:space:]]*Description:\ (.*) && -n "$name" ]]; then
+      desc="${BASH_REMATCH[1]}"
+      PULSE_NAMES+=("$name")
+      PULSE_LABELS+=("$(printf '%-46s %s' "$name" "$desc")")
+      name=""
+    fi
+  done < <(pactl list sinks 2>/dev/null)
+  if ((!${#PULSE_NAMES[@]})); then   # fallback: short form (no Description)
+    while IFS=$'\t' read -r idx pname _; do
+      [[ -n "$pname" ]] || continue
+      PULSE_NAMES+=("$pname")
+      PULSE_LABELS+=("$(printf '%-46s sink #%s' "$pname" "$idx")")
+    done < <(pactl list short sinks 2>/dev/null)
+  fi
+}
+
+choose_device_alsa() {
+  msg "Scanning ALSA playback devices (aplay -l / aplay -L)..."
+  scan_alsa_devices
+  scan_alsa_pcms
+  local labels=() i
+  for ((i=0; i<${#DEV_NAMES[@]}; i++)); do labels+=("${DEV_LABELS[$i]}"); done
+  warn "default routes through PipeWire; its mixer (pavucontrol / wpctl)"
+  warn "  picks the destination port (speaker vs headphones)."
+  warn "Direct hw:/plughw: bypasses PipeWire: exclusive access, no per-stream"
+  warn "  volume, and it breaks the live-capture workflow (parecord --monitor-stream)."
+  PS3=$'\nSelect audio output device: '
+  select sel in "default (recommended - routes through PipeWire)" \
+                "${labels[@]}" \
+                "Enter a custom ALSA PCM name" \
+                "Use plugin default (no --audio-device flag)"; do
+    [[ -z "$sel" ]] && { warn "Invalid choice."; continue; }
+    if [[ "$sel" == "Enter a custom ALSA PCM name" ]]; then
+      read -rp "ALSA PCM name: " AUDIO_DEVICE || AUDIO_DEVICE=""
+      [[ -n "$AUDIO_DEVICE" ]] || warn "Empty name - using plugin default."
+    elif [[ "$sel" == "Use plugin default (no --audio-device flag)" ]]; then
+      AUDIO_DEVICE=""
+    elif (( REPLY == 1 )); then
+      AUDIO_DEVICE="default"
+    else
+      AUDIO_DEVICE="${DEV_NAMES[$((REPLY-2))]}"
+    fi
+    ok "Audio device: ${AUDIO_DEVICE:-<plugin default>}"
+    return 0
+  done
+  AUDIO_DEVICE=""   # EOF safety: plugin default
+  ok "Audio device: <plugin default> (EOF)"
+}
+
+choose_device_pulse() {
+  msg "Scanning PulseAudio/PipeWire sinks (pactl list sinks)..."
+  scan_pulse_sinks
+  local labels=() i
+  for ((i=0; i<${#PULSE_NAMES[@]}; i++)); do labels+=("${PULSE_LABELS[$i]}"); done
+  PS3=$'\nSelect audio output device: '
+  select sel in "default" \
+                "${labels[@]}" \
+                "Enter a custom sink name" \
+                "Use plugin default (no --audio-device flag)"; do
+    [[ -z "$sel" ]] && { warn "Invalid choice."; continue; }
+    if [[ "$sel" == "Enter a custom sink name" ]]; then
+      read -rp "PulseAudio sink name: " AUDIO_DEVICE || AUDIO_DEVICE=""
+      [[ -n "$AUDIO_DEVICE" ]] || warn "Empty name - using plugin default."
+    elif [[ "$sel" == "Use plugin default (no --audio-device flag)" ]]; then
+      AUDIO_DEVICE=""
+    elif (( REPLY == 1 )); then
+      AUDIO_DEVICE="default"
+    else
+      AUDIO_DEVICE="${PULSE_NAMES[$((REPLY-2))]}"
+    fi
+    ok "Audio device: ${AUDIO_DEVICE:-<plugin default>}"
+    return 0
+  done
+  AUDIO_DEVICE=""   # EOF safety: plugin default
+  ok "Audio device: <plugin default> (EOF)"
+}
+
+choose_device() {
+  AUDIO_DEVICE=""
+  case "${AUDIO_DRIVER:-alsa}" in
+    pipewire)
+      warn "pipewire driver: FluidSynth's native pipewire driver has NO device"
+      warn "  setting upstream (and it fails on this machine) - skipping the"
+      warn "  device menu, the driver default device will be used."
+      return 0
+      ;;
+    pulseaudio) choose_device_pulse ;;
+    *)          choose_device_alsa ;;
+  esac
+}
+
 # ---------------------------------------------------------------- main
 main() {
   banner
@@ -148,8 +288,10 @@ main() {
   choose_midi
   choose_plugin
   choose_driver
+  choose_device
   [[ -n "${PLUGIN_PATH:-}" ]] || die "No plugin selected."
   AUDIO_DRIVER="${AUDIO_DRIVER:-alsa}"
+  AUDIO_DEVICE="${AUDIO_DEVICE:-}"
   if [[ "$PLUGIN_PATH" == *harmonium* && ! -f "$DEFAULT_SOUNDFONT" ]]; then
     warn "SoundFont not found: $DEFAULT_SOUNDFONT"
     warn "The harmonium plugin may fail to start. Override at configure time:"
@@ -159,6 +301,12 @@ main() {
   msg "Launching naadcore-cli (press Ctrl+C to quit)..."
   local args=(--plugin "$PLUGIN_PATH" --audio-driver "$AUDIO_DRIVER")
   [[ -n "${MIDI_ADDR:-}" ]] && args+=(--midi "$MIDI_ADDR")
+  # Omit the flag entirely for "default"/unset: the plugin's own default device
+  # is already "default" for these drivers (per-driver mapping in the plugin).
+  if [[ -n "$AUDIO_DEVICE" && "$AUDIO_DEVICE" != "default" ]]; then
+    args+=(--audio-device "$AUDIO_DEVICE")
+  fi
+  ok "Audio output: driver=$AUDIO_DRIVER device=${AUDIO_DEVICE:-<plugin default>}"
   exec "$CLI" "${args[@]}"
 }
 

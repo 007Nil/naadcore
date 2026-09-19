@@ -55,8 +55,12 @@ This builds exactly three targets:
 Walks you through everything: builds the CLI/plugins if needed (dependency
 checks included), scans ALSA MIDI sources (`aconnect -o`) and lets you pick
 one (with a rescan loop when the keyboard isn't plugged in yet), lists the
-built plugins for you to choose, offers audio-driver selection, warns if the
-SoundFont is missing, then launches the CLI. Plain flags are still available:
+built plugins for you to choose, offers audio-driver selection and then an
+audio output-device menu (driver-dependent: ALSA PCM names via `aplay`,
+PipeWire/PulseAudio sinks via `pactl`, skipped for the pipewire driver —
+`default` routes through PipeWire and pavucontrol/wpctl picks the
+speaker/headphone port), warns if the SoundFont is missing, then launches
+the CLI. Plain flags are still available:
 
 ### Direct CLI invocation
 

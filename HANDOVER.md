@@ -4,7 +4,9 @@ Last updated: 2026-09-19 (harmonium realism Phases 0–6 COMPLETE +
 **Phase A: audio OUTPUT DEVICE selection** — `--audio-device` CLI flag →
 PluginManager → pre-init `set_config("audio_device")` → plugin maps it per
 driver into FluidSynth settings; well-known environment keys convention
-formalized in docs; next NaadCore focus is other plugins)
+formalized in docs; **Phase B: launcher audio-device menu** — `naadcore.sh`
+gained a driver-dependent `choose_device` step (alsa PCMs / PulseAudio sinks /
+pipewire skip) with a plugin-default skip entry as the EOF-safety default)
 
 ## Project purpose
 
@@ -47,7 +49,8 @@ startup — no manual `aconnect` needed.
 naadcore/
 ├── CMakeLists.txt                  # Root build — exactly 3 targets (see below)
 ├── naadcore.sh                     # Interactive launcher: build → MIDI scan/menu
-│                                   #   → plugin menu → driver menu → run CLI
+│                                   #   → plugin menu → driver menu → device menu
+│                                   #   (Phase B) → run CLI
 ├── README.md                       # Build/run instructions (CLI + plugin workflow)
 ├── HANDOVER.md                     # This file
 ├── IMPLEMENTATION_SUMMARY.md       # Implementation history/status
@@ -282,8 +285,54 @@ plugin init(): audio.alsa.device / audio.pulseaudio.device setstr per driver
   pipewire driver). Unset → FluidSynth defaults. Startup log gained
   `Synth audio: driver=<d> device=<v|default>` (before the voicing line).
 - Registry row: docs/HARMONIUM_CONFIG.md (15 keys total now).
-- **naadcore.sh: device menu deliberately NOT added** (Phase B pending);
-  the script works unchanged.
+- **naadcore.sh device menu: DONE in Phase B (2026-09-19)** — see
+  "Launcher device menu (Phase B)" below.
+
+### Launcher device menu (Phase B, 2026-09-19)
+
+`naadcore.sh` gained a `choose_device` step between the driver menu and the
+launch (banner now reads `build -> MIDI -> plugin -> driver -> device ->
+play`). Driver-dependent behavior, all select-based with PS3, following the
+script's existing EOF-safety patterns:
+
+- **alsa**: menu = `default (recommended - routes through PipeWire)` first,
+  then hardware devices parsed from `aplay -l` — BOTH
+  `plughw:CARD=<id>,DEV=<n>` (preferred, format/rate conversion) and
+  `hw:CARD=<id>,DEV=<n>` (raw/exclusive), labeled with the card/device
+  names — then PCM names from `aplay -L` matching
+  `^(sysdefault|plughw|front|iec958|hdmi):` (plughw entries already offered
+  are de-duplicated; the first indented description line from `aplay -L`
+  labels them), capped at 12 device entries, then "Enter a custom ALSA PCM
+  name", then "Use plugin default (no --audio-device flag)". The
+  PipeWire-vs-direct warning (port routing via pavucontrol/wpctl; direct
+  hw:/plughw: breaks `parecord --monitor-stream` capture) is printed once
+  above the menu.
+- **pulseaudio**: menu = `default` first, then sinks from `pactl list sinks`
+  (Name + Description pairs) with a `pactl list short sinks` fallback (index
+  label only if no Description available), then custom-entry and
+  plugin-default entries.
+- **pipewire**: menu SKIPPED entirely with the honest warning — FluidSynth's
+  native pipewire driver has NO device setting upstream (and fails on this
+  machine); the driver default device is used.
+- **Skip / EOF defaults**: the final "Use plugin default (no
+  --audio-device flag)" entry is always present; EOF inside the device
+  select falls out of the loop to the same choice (no infinite loop); a
+  custom entry followed by EOF/empty input also lands on plugin default.
+- **Launch wiring**: `--audio-device "$AUDIO_DEVICE"` is appended ONLY when
+  the choice is non-empty and not `default` — "default" and "plugin
+  default" both OMIT the flag (the plugin's per-driver default device is
+  already `default`, and the CLI log then prints
+  `Synth audio: driver=<d> device=default` either way). A launch preview
+  line `ok "Audio output: driver=<d> device=<v|<plugin default>>"` prints
+  before `exec`.
+- Verified by piped-selection smoke tests (2026-09-19): default → flag
+  omitted + `device=default`; `plughw:CARD=PCH,DEV=0` and custom
+  `hw:CARD=PCH,DEV=7` → flag passed, `Synth audio:` line shows the device,
+  driver starts (audio-start contract; the direct-hw caveat above applies);
+  pulseaudio sink `alsa_output.pci-0000_00_1f.3.analog-stereo` → PulseAudio
+  driver starts; pipewire → skip + known native-driver failure (pre-existing,
+  exit 1); invalid menu choice recovers (warn + re-prompt); full EOF and
+  EOF-at-device-step both terminate / default correctly.
 
 **This machine's audio landscape** (inspection 2026-09-19 — validates the
 UX assumptions):
@@ -889,11 +938,9 @@ Deferred harmonium items (parked — resume only if desired):
    convention (`audio_driver`, `audio_device`) is now formalized in
    docs/PLUGIN_SYSTEM.md + docs/PLUGIN_DEVELOPMENT.md — new plugins
    SHOULD scaffold both keys (the sample plugin shows the pattern).
-2. **Phase B (launcher device menu)**: add an audio-device selection step
-   to `naadcore.sh` next to the driver menu (enumerate ALSA PCMs via
-   `aplay -L` and/or sinks via `pactl list short sinks`; PipeWire routing
-   note: on this machine `default` + pavucontrol/wpctl handles
-   speaker/headphone choice). NOT done in Phase A by design.
+2. **Phase B (launcher device menu)**: DONE (2026-09-19) — see "Launcher
+   device menu (Phase B)" above; `naadcore.sh` enumerates ALSA PCMs /
+   PulseAudio sinks with the honest PipeWire-routing note.
 3. **Multiple plugin support in CLI**: accept several `--plugin` flags or a
    plugin directory; route MIDI to all loaded plugins (PluginManager already
    fans out). NOTE: plugins each own their audio output device — multi-plugin
