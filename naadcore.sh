@@ -31,6 +31,87 @@ ${C_B}+-------------------------------------------------------+
 EOF
 }
 
+# ---------------------------------------------------------------- LFS
+check_lfs_files() {
+  # Some repo files (e.g. large SoundFonts) are tracked via git-lfs.
+  # On a fresh clone without LFS initialised the checkout produces
+  # ~140-byte pointer text files instead of the real binary.  Verify
+  # each LFS-tracked file is a real binary; if not, install LFS and
+  # pull the blobs so subsequent build/run steps see the correct data.
+  local lfspatterns=()
+  if [[ -f "$ROOT/.gitattributes" ]]; then
+    while IFS= read -r p; do
+      lfspatterns+=("$p")
+    done < <(grep -E ' filter=lfs$' "$ROOT/.gitattributes" | awk '{print $1}')
+  fi
+  ((${#lfspatterns[@]})) || return 0   # nothing LFS-tracked
+
+  local pointers=() real_files=()
+  for pat in "${lfspatterns[@]}"; do
+    local resolved
+    # Resolve the .gitattributes glob to actual paths on disk
+    local matches
+    matches=($ROOT/$pat)
+    [[ -e "${matches[0]}" ]] || continue
+    for f in "${matches[@]}"; do
+      if [[ -f "$f" ]]; then
+        local fsize
+        fsize=$(wc -c < "$f")
+        if (( fsize < 500 )); then
+          local header
+          header=$(head -c 30 "$f")
+          if [[ "$header" == "version https://git-lfs"* ]]; then
+            pointers+=("$f")
+          else
+            real_files+=("$f")
+          fi
+        else
+          real_files+=("$f")
+        fi
+      fi
+    done
+  done
+
+  ((${#pointers[@]})) || return 0   # all LFS files are real
+
+  # Need to pull LFS blobs
+  if ! command -v git-lfs >/dev/null 2>&1; then
+    die "git-lfs is not installed. Install it with: sudo apt install git-lfs && git lfs install"
+  fi
+  msg "Initialising git-lfs and pulling blob files..."
+  git -C "$ROOT" lfs install >/dev/null 2>&1 || warn "git lfs install returned non-zero"
+  git -C "$ROOT" lfs pull 2>/dev/null || die "git lfs pull failed — manual fix required:"
+  warn "  cd $ROOT && git lfs install && git lfs pull"
+
+  # Re-check
+  pointers=()
+  for pat in "${lfspatterns[@]}"; do
+    local matches
+    matches=($ROOT/$pat)
+    [[ -e "${matches[0]}" ]] || continue
+    for f in "${matches[@]}"; do
+      if [[ -f "$f" ]]; then
+        local fsize
+        fsize=$(wc -c < "$f")
+        if (( fsize < 500 )); then
+          local header
+          header=$(head -c 30 "$f")
+          if [[ "$header" == "version https://git-lfs"* ]]; then
+            pointers+=("$f")
+          fi
+        fi
+      fi
+    done
+  done
+
+  if ((${#pointers[@]})); then
+    die "LFS pull incomplete — these files are still pointers:
+  ${pointers[*]}
+Manual fix: cd $ROOT && git lfs install && git lfs pull"
+  fi
+  ok "All git-lfs files verified."
+}
+
 # ---------------------------------------------------------------- build
 build_step() {
   if [[ -x "$CLI" ]]; then
@@ -286,6 +367,7 @@ choose_device() {
 # ---------------------------------------------------------------- main
 main() {
   banner
+  check_lfs_files
   build_step
   choose_midi
   choose_plugin
