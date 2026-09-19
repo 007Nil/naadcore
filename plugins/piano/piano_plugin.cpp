@@ -108,11 +108,10 @@ PluginResult PianoPlugin::init(const char* audio_driver) {
     // hit come through fully. A 10 ms ramp hides most of the transient
     // while keeping the piano responsive.
     //
-    // 10 ms = 1200 * log2(0.010) = -9466 timecents
-    // Offset to apply = -9466 - (-12000) = +2534 (additive per FluidSynth
-    // 2.4 — matches the harmonium plugin's approach).
+    // 10 ms in timecents = 1200 * log2(10/1000) = -7972.6 tc
+    // Zone attack = -12000 (SF2 default), so offset = -7972.6 - (-12000) = +4027
     for (int ch = 0; ch < midi_channels; ++ch) {
-        fluid_synth_set_gen(synth_, ch, GEN_VOLENVATTACK, 2534.0f);
+        fluid_synth_set_gen(synth_, ch, GEN_VOLENVATTACK, 4027.0f);
     }
 
     // Load SoundFont (embedded path)
