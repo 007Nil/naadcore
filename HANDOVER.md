@@ -1,48 +1,10 @@
 # NaadCore Handover — Authoritative State Document
 
-Last updated: 2026-09-19 (harmonium realism Phase 6: key-click/chiff layer +
-per-note micro-variation — the polish phase. Derived font
-plugins/harmonium/soundfonts/harmonium_v3.sf2 (now the CMake default) adds a
-synthesized 40 ms key-noise "KeyClick" sample and preset 2 "key click" — a
-SELF-ENDING click instrument (attack 1 ms / decay 40 ms / sustain fully
-closed; the voice dies ≤21 ms after onset, proven by render — a
-self-sustaining click would be a permanent drone); preset 0 is byte-identical
-to v2 (T1 render compared). The plugin triggers the click on internal channel
-12 on every ACCEPTED main-path NoteOn (never for drone changes, never for a
-swallowed duplicate NoteOn — no pallet moved, no click), controlled by the
-`key_click` config key ("off" default / "low"=vel 45 / "high"=vel 75, CC 7=64
-on ch12); micro-variation via the `variation` key ("on" default / "off"):
-a fixed-seed mt19937 (seed 20260919) jitters only the velocity handed to
-FluidSynth (±1..3 main, ±4..8 click, anti-repeat so consecutive notes never
-coincide) — the bellows reference/baton bookkeeping stays exact, off is
-byte-comparable against Phase 5; variation=on defeats sample-identical
-repeats (measured ±0.1–0.6 dB per note, adjacent repeats never identical,
-deterministic across runs to 0.000 dB). Channel reservation is now
-15 coupler / 14 sub-octave / 13 drone / 12 click. 267/267 config tests;
-authoritative config-key registry at docs/HARMONIUM_CONFIG.md; see
-"Key click + micro-variation (Phase 6)" below. Phases 0–5 unchanged: synth
-voicing pinned in plugin — gain/reverb/chorus defaults + live config keys;
-runtime envelope shaping — attack_ms/release_ms live config keys via
-FluidSynth channel generators; reed stops — `stop` config key (single/double)
-selecting presets in the in-repo derived fonts, PROGRAM_CHANGE events
-ignored; layer router — octave coupler on internal channel 15 (note+12,
-~6–8 dB below main, +3¢ detuned) and sub-octave on channel 14 (note−12,
-~11–14 dB below main), `coupler` / `sub_octave` live config keys with
-mid-phrase toggling while notes are held; drone (unpika) on internal channel
-13 — config-controlled fixture notes (`drone` key: "off" or up to 8
-comma-separated MIDI note numbers) sounding continuously under the melody,
-never touching the bellows model, fixed velocity 100 with loudness from
-`drone_level` (CC 7 on ch13, default 45, measured ≈11–14 dB under the melody
-fundamental), live add/remove semantics, not cleared-and-forgotten by CC 123,
-no pitch-bend/CC11 mirroring; pitch bend + CC 11 mirrored to coupler/sub only,
-CC 7 deliberately NOT mirrored (it IS the layer gain); duplicate NoteOn on a
-held key IGNORED (no re-attack); CC 123 hardened to all_notes_off on ALL 16
-channels plus drone reset; cross-channel NoteOff releases voices on the
-note's original channel; uniform bellows velocity model (held_notes_ vector,
-reference_velocity_ latch/baton-pass); plugin-in-loop offline renderer with
-KEY=VALUE config overrides; test harness under tests/; SF2 audited — see
-docs/HARMONIUM_SF2_AUDIT.md; `--audio-driver` CLI flag wired through;
-interactive launcher naadcore.sh added)
+Last updated: 2026-09-19 (harmonium realism effort Phases 0–6 COMPLETE —
+the harmonium plugin is feature-complete: voicing, envelope shaping,
+double-reed shimmer, coupler/sub-octave layers, drone, key-click,
+micro-variation; reference A/B package prepared; next NaadCore focus is
+other plugins)
 
 ## Project purpose
 
@@ -814,40 +776,53 @@ To clear a stuck note in a live instance:
 
 ## Suggested next steps
 
-1. **Harmonium realism Phases 7+** (active effort — Phases 0–6 complete):
-   - Phase 7 (envelope work can't fix this): high-register stretch — keys
-     65–84 are one F4 sample stretched up to +19 semitones; needs new samples
-   - Raga note filtering (Phase 8 candidate) in the harmonium plugin (see
-     docs/CODEBASE_ANALYSIS.md for the harmonium-companion raga/sargam logic
-     worth porting)
-   - Low-register beat polish (Phase 3 leftover: raise D or clamp the low
-     register — note 43's 0.24 Hz beat is at the slow edge)
-   - Click polish (open): the click is currently a fixed bandpassed noise
-     burst; a velocity- and register-dependent click (quieter/higher-pitched
-     up the keyboard) and a `key_click_level` fine knob are natural
-     follow-ups; drone polish: sargam-name parsing for `drone` ("Sa,Pa" →
-     48,55 etc., needs a tonic offset decision); optional gentle
-     chorus/detune dedicated to the drone channel
-    - Optional Phase 3 polish: `four` stop (2 unison + octave pair) in the
-      derived font if the coupler doesn't cover it; raise D at the low end
-      (note 43's beat 0.24 Hz is at the slow edge); live `stop` switching
-      via capture_live.sh (needs a config plumb)
-    - Reference clips: DONE (2026-09-19, yt-dlp + sox installed) — A/B
-      package prepared, subjective score sheet in tests/RESULTS.md now
-      fillable by the user (protocol in tests/README.md)
+**The harmonium realism effort (Phases 0–6) is COMPLETE as of 2026-09-19.**
+The plugin is feature-complete per the plan: pinned voicing, runtime
+envelope shaping, double-reed shimmer (derived in-repo font), octave
+coupler + sub-octave layers, drone, key-click layer, per-note
+micro-variation — 14 config keys (see `docs/HARMONIUM_CONFIG.md`), 267/267
+config-seam tests, objective verification in `tests/RESULTS.md`, and a
+prepared reference A/B package for subjective listening. The user has
+closed out this phase; future NaadCore work focuses on **other plugins**.
+
+Deferred harmonium items (parked — resume only if desired):
+1. **Phase 7 (better samples)**: high-register stretch — keys 65–84 are
+   one F4 sample stretched up to +19 semitones; needs new (own/licensed)
+   recordings; envelope/config work cannot fix it
+2. **Phase 8 (raga note filtering)**: port the 13-raga pitch-class sets
+   from docs/CODEBASE_ANALYSIS.md as a plugin config key
+3. Low-register beat polish (note 43's 0.24 Hz beat is at the slow edge)
+4. Velocity/register-dependent click shaping, `key_click_level` fine knob
+5. Sargam-name parsing for `drone` ("Sa,Pa" — needs a tonic offset decision)
+6. User's subjective A/B scores (tests/RESULTS.md) — the package is
+   prepared; scores may inform targeted polish later
+   - Click polish: velocity/register-dependent click shaping and a
+     `key_click_level` fine knob; drone polish: sargam-name parsing and
+     an optional gentle drone-only chorus/detune
+   - Optional Phase 3 polish: `four` stop (2 unison + octave pair) in the
+     derived font; live `stop` switching via capture_live.sh (needs a
+     config plumb)
+
+**Framework next steps (active focus — other plugins):**
+
+1. **Additional instrument plugins**: pipe organ, drone/tanpura, etc.
+   using the same INaadPlugin contract — the portability proof. Lessons
+   from the harmonium plugin apply: pin voicing at init, use the config
+   seam for instrument controls, keep instrument physics plugin-local
+   (see docs/PLUGIN_DEVELOPMENT.md).
 2. **Multiple plugin support in CLI**: accept several `--plugin` flags or a
    plugin directory; route MIDI to all loaded plugins (PluginManager already
-   fans out).
+   fans out). NOTE: plugins each own their audio output device — multi-plugin
+   fan-out will hit ALSA device contention; a host-owned audio engine or a
+   shared PipeWire graph decision is needed before this is real.
 3. **Plugin configuration surface**: wire `set_config/get_config` to CLI
-   flags, a config file, or MIDI CC mappings (the realism plan recommends
-   in-plugin CC mappings to avoid CLI changes).
-4. **Raga selection**: implement raga note filtering in the harmonium plugin
-   (see docs/CODEBASE_ANALYSIS.md for the harmonium-companion raga/sargam logic
-   worth porting).
-5. **Bellows/expression modeling**: map a MIDI controller (CC#11 or velocity
+   flags, a config file, or MIDI CC mappings (the harmonium pattern:
+   in-plugin CC mappings avoid CLI changes).
+4. **Bellows/expression modeling**: map a MIDI controller (CC#11 or velocity
    envelope) to harmonium air-pressure expression (deliberately deferred —
-   air is assumed 100% for the current realism phases).
-6. **Additional plugins**: pipe organ or drone/tanpura plugin using the same
-   INaadPlugin contract as a portability proof.
-7. **Packaging**: install rules exist (`bin`, `lib/naadcore`, `lib/naadcore/plugins`);
+   air was assumed 100% for the realism phases).
+5. **Packaging**: install rules exist (`bin`, `lib/naadcore`, `lib/naadcore/plugins`);
    consider CPack or a proper install layout.
+6. **Engineering hygiene (framework-level)**: wire the signal-handler
+   teardown safely (sig_atomic flag observed by the main loop instead of
+   non-async-safe work in the handler); populate `MidiEvent::timestamp`.

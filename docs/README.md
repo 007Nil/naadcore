@@ -51,16 +51,20 @@ naadcore/
    (`naad_plugin_create()`, `naad_plugin_destroy()`, `naad_plugin_get_version()`)
 
 5. **HarmoniumPlugin** (`plugins/harmonium/`)
-   - Reference plugin: own FluidSynth instance, compile-time SoundFont path
+   - Reference plugin: own FluidSynth instance, derived in-repo SoundFont
+     (`soundfonts/harmonium_v3.sf2`: presets single / double-reed / key-click)
    - Uniform bellows velocity: keys pressed together sound at the first key's
      velocity; when that key is released, the reference passes to the oldest
      still-held key's original press velocity (see "Uniform Bellows Velocity"
      in `HANDOVER.md`)
-   - Pinned synth voicing (Phase 1, 2026-09-18): gain 0.4, reverb on
-     ("small room": roomsize 0.2 / damp 0.0 / width 0.3 / level 0.4),
-     chorus off, 4th-order interpolation; live config keys `gain`, `reverb`,
-     `chorus` via `set_config`/`get_config` (see `HANDOVER.md`)
-    - SoundFont structure audited: see `docs/HARMONIUM_SF2_AUDIT.md`
+   - Realism feature set (Phases 0–6 complete, 2026-09-19): pinned voicing
+     (gain 0.4, small-room reverb, chorus off, 4th-order interpolation),
+     runtime envelope shaping (attack_ms/release_ms), reed stops (`stop`),
+     octave coupler + sub-octave layers (`coupler`/`sub_octave`), drone
+     (`drone`/`drone_level`), key-click layer (`key_click`), per-note
+     micro-variation (`variation`); live `gain`/`reverb`/`chorus` keys
+   - Config-key registry: `docs/HARMONIUM_CONFIG.md`; SF2 audit:
+     `docs/HARMONIUM_SF2_AUDIT.md`; realism verification: `tests/RESULTS.md`
     - Config keys documented authoritatively (Phases 1–5: gain/reverb/
       chorus, attack_ms/release_ms, stop, coupler/sub_octave, drone/
       drone_level): see `docs/HARMONIUM_CONFIG.md`
@@ -294,14 +298,18 @@ pm.route_midi_event(event);   // fan-out to all loaded plugins
 
 ## Next Steps
 
-1. **Multiple plugins** - Accept several plugins per CLI run
-2. **CC Handling depth** - Modulation, expression, sustain mapping
-3. **Preset Selection** - Per-plugin SoundFont preset control
-4. **Raga Support** - Sargam notation and microtonal tuning in the harmonium plugin
-5. **Bellows Physics** - Model harmonium bellows pressure (expression CC#11)
-6. **Coupler/Sub-octave** - Harmonium octave-coupler features
-7. **GUI/Visualizer** - Qt-based interface
-8. **Performance Optimization** - Use poll() instead of sleep
+The harmonium realism effort (Phases 0–6) is COMPLETE (2026-09-19) —
+see `HANDOVER.md`. Items 3–6 below are done (preset selection = `stop`
+key; coupler/sub-octave = Phase 4; CC depth partial = bend/CC11
+mirroring); remaining:
+
+1. **Other instrument plugins** - pipe organ, drone/tanpura, etc. using the
+   same INaadPlugin contract (active focus)
+2. **Multiple plugins** - Accept several plugins per CLI run (needs the
+   host-owned-audio / shared-graph decision first)
+3. **Raga Support** - Sargam notation and microtonal tuning in the harmonium plugin
+4. **GUI/Visualizer** - Qt-based interface
+5. **Performance Optimization** - Use poll() instead of sleep
 
 ## Documentation
 
@@ -310,6 +318,8 @@ pm.route_midi_event(event);   // fan-out to all loaded plugins
 - `docs/NAADCORE_ARCHITECTURE.md` - Architecture overview
 - `docs/PLUGIN_SYSTEM.md` - Plugin system documentation
 - `docs/PLUGIN_DEVELOPMENT.md` - Plugin development guide
+- `docs/HARMONIUM_CONFIG.md` - Harmonium plugin config-key registry
 - `docs/HARMONIUM_SF2_AUDIT.md` - harmonium.sf2 structure audit (Phase 1 realism work)
 - `tests/README.md` - Realism test harness guide
+- `tests/RESULTS.md` - Objective + subjective A/B results
 - `docs/NAADCORE_MVP_CHALLENGE.md` - Historical MVP record (completed)
