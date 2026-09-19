@@ -38,11 +38,16 @@ check_lfs_files() {
   # ~140-byte pointer text files instead of the real binary.  Verify
   # each LFS-tracked file is a real binary; if not, install LFS and
   # pull the blobs so subsequent build/run steps see the correct data.
+  msg "Checking git-lfs files..."
   local lfspatterns=()
   if [[ -f "$ROOT/.gitattributes" ]]; then
     while IFS= read -r p; do
       lfspatterns+=("$p")
     done < <(grep -E ' filter=lfs$' "$ROOT/.gitattributes" | awk '{print $1}')
+    msg "  LFS patterns found: ${#lfspatterns[@]}"
+  else
+    msg "  No .gitattributes — skipping LFS check."
+    return 0
   fi
   ((${#lfspatterns[@]})) || return 0   # nothing LFS-tracked
 
@@ -72,16 +77,27 @@ check_lfs_files() {
     done
   done
 
-  ((${#pointers[@]})) || return 0   # all LFS files are real
+  if ((${#pointers[@]})); then
+    msg "  LFS pointers detected (${#pointers[@]} files):"
+    for p in "${pointers[@]}"; do
+      msg "    $p ($(wc -c < "$p") bytes)"
+    done
+  else
+    msg "  All LFS files verified as real binaries."
+    return 0
+  fi
 
   # Need to pull LFS blobs
   if ! command -v git-lfs >/dev/null 2>&1; then
     die "git-lfs is not installed. Install it with: sudo apt install git-lfs && git lfs install"
   fi
-  msg "Initialising git-lfs and pulling blob files..."
-  git -C "$ROOT" lfs install >/dev/null 2>&1 || warn "git lfs install returned non-zero"
-  git -C "$ROOT" lfs pull 2>/dev/null || die "git lfs pull failed — manual fix required:"
-  warn "  cd $ROOT && git lfs install && git lfs pull"
+  msg "  Initialising git-lfs and pulling blob files..."
+  git -C "$ROOT" lfs install 2>/dev/null
+  git -C "$ROOT" lfs pull 2>&1 || {
+    warn "  git lfs pull failed — manual fix required:"
+    warn "    cd $ROOT && git lfs install && git lfs pull"
+    die "Cannot proceed without LFS blobs."
+  }
 
   # Re-check
   pointers=()
