@@ -6,6 +6,12 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <alsa/asoundlib.h>
+#include <sys/select.h>
+#include <fcntl.h>
+#include <thread>
+#include <atomic>
+#include <sstream>
+#include <algorithm>
 
 namespace naadcore {
 
@@ -30,8 +36,11 @@ private:
     bool show_help_;
     
     bool running_;
+    std::atomic<bool> cli_running_;
     
     void signal_handler(int signum);
+    void process_cli_commands();
+    bool handle_cli_command(const std::string& command);
 };
 
 NaadCoreCLI::NaadCoreCLI() 
@@ -251,7 +260,10 @@ int NaadCoreCLI::run() {
         std::cout << "Listening for MIDI from " << midi_input_str_ << std::endl;
     }
     
-    running_ = true;
+    cli_running_ = true;
+    
+    // Start CLI command processing thread
+    std::thread cli_thread(&NaadCoreCLI::process_cli_commands, this);
     
     // Main loop - process MIDI events if MIDI input is configured
     if (!midi_input_str_.empty()) {
@@ -269,11 +281,107 @@ int NaadCoreCLI::run() {
     }
     
     // Cleanup
+    cli_running_ = false;
+    if (cli_thread.joinable()) {
+        cli_thread.join();
+    }
     std::cout << "Cleaning up..." << std::endl;
     pm.stop_all_audio();
     pm.cleanup();
     
     return 0;
+}
+
+void NaadCoreCLI::process_cli_commands() {
+    std::string line;
+    while (cli_running_) {
+        // Set stdin to non-blocking mode
+        int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+        fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+        
+        // Check for input
+        char buffer[1024];
+        ssize_t bytes_read = read(STDIN_FILENO, buffer, sizeof(buffer) - 1);
+        
+        if (bytes_read > 0) {
+            buffer[bytes_read] = '\0';
+            std::string input(buffer);
+            
+            // Process the input line by line
+            size_t pos = 0;
+            size_t newline_pos;
+            
+            while ((newline_pos = input.find('\n', pos)) != std::string::npos) {
+                std::string command = input.substr(pos, newline_pos - pos);
+                // Remove leading/trailing whitespace
+                command.erase(command.begin(), std::find_if(command.begin(), command.end(), [](unsigned char ch) {
+                    return !std::isspace(ch);
+                }));
+                command.erase(std::find_if(command.rbegin(), command.rend(), [](unsigned char ch) {
+                    return !std::isspace(ch);
+                }).base(), command.end());
+                
+                if (!command.empty()) {
+                    handle_cli_command(command);
+                }
+                pos = newline_pos + 1;
+            }
+            
+            // Handle remaining input (partial line)
+            if (pos < input.length()) {
+                // For simplicity, we'll just ignore partial lines
+            }
+        }
+        
+        // Reset to blocking mode
+        fcntl(STDIN_FILENO, F_SETFL, flags);
+        
+        // Small delay to prevent busy waiting
+        usleep(10000); // 10ms
+    }
+}
+
+bool NaadCoreCLI::handle_cli_command(const std::string& command) {
+    // Split command into parts
+    std::istringstream iss(command);
+    std::vector<std::string> tokens;
+    std::string token;
+    
+    while (iss >> token) {
+        tokens.push_back(token);
+    }
+    
+    if (tokens.empty()) {
+        return false;
+    }
+    
+    // Handle commands
+    if (tokens[0] == "coupler") {
+        if (tokens.size() < 2) {
+            std::cout << "Usage: coupler on|off" << std::endl;
+            return false;
+        }
+        
+        if (tokens[1] == "on") {
+            std::cout << "Setting coupler ON" << std::endl;
+            return true;
+        } else if (tokens[1] == "off") {
+            std::cout << "Setting coupler OFF" << std::endl;
+            return true;
+        } else {
+            std::cout << "Invalid coupler command. Usage: coupler on|off" << std::endl;
+            return false;
+        }
+    } else if (tokens[0] == "status") {
+        std::cout << "Status command not yet implemented" << std::endl;
+        return true;
+    } else {
+        std::cout << "Unknown command: " << command << std::endl;
+        std::cout << "Available commands: coupler on, coupler off, status" << std::endl;
+        return false;
+    }
+    
+    return true;
 }
 
 } // namespace naadcore
