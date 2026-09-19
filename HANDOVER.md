@@ -828,11 +828,13 @@ To clear a stuck note in a live instance:
      follow-ups; drone polish: sargam-name parsing for `drone` ("Sa,Pa" →
      48,55 etc., needs a tonic offset decision); optional gentle
      chorus/detune dedicated to the drone channel
-   - Optional Phase 3 polish: `four` stop (2 unison + octave pair) in the
-     derived font if the coupler doesn't cover it; raise D at the low end
-     (note 43's beat 0.24 Hz is at the slow edge); live `stop` switching
-     via capture_live.sh (needs a config plumb)
-     - Reference clips still pending (yt-dlp/sox not installable non-interactively)
+    - Optional Phase 3 polish: `four` stop (2 unison + octave pair) in the
+      derived font if the coupler doesn't cover it; raise D at the low end
+      (note 43's beat 0.24 Hz is at the slow edge); live `stop` switching
+      via capture_live.sh (needs a config plumb)
+    - Reference clips: DONE (2026-09-19, yt-dlp + sox installed) — A/B
+      package prepared, subjective score sheet in tests/RESULTS.md now
+      fillable by the user (protocol in tests/README.md)
 2. **Multiple plugin support in CLI**: accept several `--plugin` flags or a
    plugin directory; route MIDI to all loaded plugins (PluginManager already
    fans out).

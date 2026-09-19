@@ -51,13 +51,18 @@ tests/
 | pulseaudio-utils (parecord, pactl) | OK (PipeWire with pipewire-alsa) |
 | python3 + numpy | OK (numpy 2.3.5) |
 | mido | missing — gen_midi.py writes MIDI bytes directly |
-| sox | missing (no sudo available); not required — fluidsynth writes WAV directly and analyze.py uses stdlib wave + numpy |
-| ffmpeg | missing (no sudo available); only needed for reference-clip prep |
-| yt-dlp | missing; only needed for reference-clip downloads |
+| sox (SoX_ng 14.7.0.9) | OK (installed 2026-09-19) — trimming, normalization, spectrograms |
+| ffmpeg | missing (not needed for the current workflow) |
+| yt-dlp (2026.03.17) | OK (installed 2026-09-19) — reference-clip downloads |
 
-sox/ffmpeg/yt-dlp could not be installed non-interactively (`sudo` needs a
-TTY). They are only needed for the reference-clip workflow below; the core
-harness (generate → render → capture → analyze) works without them.
+yt-dlp notes: YouTube per-video downloads intermittently fail with
+`HTTP Error 403: Forbidden` (bot protection / rate limiting) — retry with
+different search terms or use archive.org, which worked reliably. yt-dlp's
+wav pipe can write a data-chunk size larger than the actual bytes; sox then
+fails with "premature EOF" and empty output — fix with
+`python3 tests/scripts/fix_wav_headers.py <file.wav>` before trimming.
+Never run sox in-place (`sox f f`) — it truncates the file to zero; use a
+temp output and rename.
 
 ## Reproducing everything
 
@@ -332,19 +337,46 @@ waveform — the same technique as the Phase 3 beat table.
 ## Reference-clip workflow
 
 Reference harmonium recordings go in `tests/references/` (gitignored —
-**personal use only, never commit them**). Workflow when yt-dlp/sox are
-available:
+**personal use only, never commit them**). Prepared A/B package
+(2026-09-19, see `tests/RESULTS.md`):
+
+| Clip | Source | Trim | Content |
+|---|---|---|---|
+| `ref_refA.wav` | yt-dlp "harmonium solo close mic" | 0–15 s | solo phrases |
+| `ref_refB.wav` | same | 33–48 s | solo phrases (second take) |
+| `ref_scaleA.wav` | archive.org harmonium item | 8–28 s | sustained scale work |
+
+All peak-normalized to −3 dBFS. Matching current-build renders (also
+peak-normalized) live in `tests/renders/ab/`:
+`T1_single_note_envelope_current.wav`, `T2_scale_legato_current.wav`,
+`T6_repertoire_phrase_current.wav` (+ `*_spec.png` spectrograms for each
+clip/render pair).
+
+Reproducing the package:
 
 ```bash
-yt-dlp -x --audio-format wav -o tests/references/ref_raw.wav '<url>'
-# trim to a representative 15–30 s phrase:
-sox tests/references/ref_raw.wav tests/references/ref.wav trim <start> <dur>
-# normalize loudness so A/B listening is fair:
-sox tests/references/ref.wav tests/references/ref_norm.wav gain -n -3
-# (or: ffmpeg -i ref.wav -af loudnorm=I=-16:TP=-1.5 ref_norm.wav)
-```
+cd tests/references
+yt-dlp -x --audio-format wav -o 'ref_raw.%(ext)s' 'ytsearch1:harmonium solo close mic'
+yt-dlp -x --audio-format wav -o 'ref_scale_raw.%(ext)s' 'https://archive.org/...'  # archive.org items
+python3 ../scripts/fix_wav_headers.py ref_raw.wav ref_scale_raw.wav
+sox ref_raw_fixed.wav ref_fixed.wav && sox ref_scale_raw_fixed.wav ref_scale_fixed.wav
+sox ref_fixed.wav ref_refA.wav trim 0 15          # pick active regions via RMS scan
+sox ref_fixed.wav ref_refB.wav trim 33 15
+sox ref_scale_fixed.wav ref_scaleA.wav trim 8 20
+for f in ref_refA ref_refB ref_scaleA; do
+    sox "$f.wav" "${f}_n.wav" gain -n -3 && mv "${f}_n.wav" "$f.wav"
+done
 
-Score reference vs old vs new per track in `tests/RESULTS.md`.
+# current-build renders + normalization + spectrograms
+for t in T1_single_note_envelope T2_scale_legato T6_repertoire_phrase; do
+    ../scripts/run_render_plugin.sh ../midi/$t.mid ../renders/ab/${t}_current.wav
+done
+for f in ../renders/ab/*_current.wav; do
+    sox "$f" "${f%.wav}_n.wav" gain -n -3 && mv "${f%.wav}_n.wav" "$f"
+    sox "$f" -n spectrogram -o "${f%.wav}_spec.png" -x 900 -y 500
+done
+sox ../../tests/references/ref_refA.wav -n spectrogram -o ../renders/ab/ref_refA_spec.png -x 900 -y 500
+```
 
 ## Track catalog
 

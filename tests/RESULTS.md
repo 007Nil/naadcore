@@ -36,6 +36,37 @@ Attributes:
 | T6 | A8 ambience | | | | |
 | T7 | velocity response | | | | |
 
+## A/B listening package (prepared 2026-09-19)
+
+The reference clips and current-build renders are prepared and
+loudness-matched (all peak-normalized to −3 dBFS) — the subjective rows
+above are now fillable. Files:
+
+- `tests/references/ref_refA.wav`, `ref_refB.wav` (solo phrases, 15 s each),
+  `ref_scaleA.wav` (sustained scale work, 20 s) — sources and trim
+  provenance in `tests/README.md`
+- `tests/renders/ab/T1_single_note_envelope_current.wav`,
+  `T2_scale_legato_current.wav`, `T6_repertoire_phrase_current.wav`
+  (plugin-in-loop renders of the current build, default config)
+- Spectrograms: `tests/renders/ab/*_spec.png` for every clip/render
+
+Suggested listening protocol (use the A1–A8 attribute definitions above):
+
+1. Same headphones/speakers, comfortable fixed volume across all files.
+2. Per pair: reference → render → reference → render. Score each
+   attribute 1–5 in the table above with a one-line note.
+3. Pairs by attribute:
+   - **A1/A2/A6** — `ref_refA` vs `T1_..._current` (single notes,
+     attack/sustain/release character)
+   - **A5/A3** — `ref_scaleA` vs `T2_..._current` (legato, registers)
+   - **A4/A7/A8 gestalt** — `ref_refB` vs `T6_..._current` (musical phrase)
+4. Optional: spectogram side-by-side (`*_spec.png`) for attack transients,
+   beat striping, and release shape.
+5. Known physical differences to expect (not bugs): the references are
+   different microphones/rooms/instruments; our top octave is a stretched
+   sample (Phase 7 candidate); our reverb is a small-room FluidSynth
+   preset.
+
 ## Objective baseline (Phase 0 vs Phase 1 offline renders)
 
 T1_single_note_envelope, notes at 4 s hold / 1 s gap. Measured with
