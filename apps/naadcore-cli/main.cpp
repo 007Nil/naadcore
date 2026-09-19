@@ -33,15 +33,12 @@ private:
     std::string audio_device_;
     bool show_help_;
     
-    bool running_;
-    
-    void signal_handler(int signum);
-    void handle_stdin_command(PluginManager& pm, const std::string& command);
+     void handle_stdin_command(PluginManager& pm, const std::string& command);
 };
 
 NaadCoreCLI::NaadCoreCLI() 
     : plugin_path_(""), midi_input_str_(""), audio_driver_("alsa"),
-      audio_device_(""), show_help_(false), running_(false) {
+      audio_device_(""), show_help_(false) {
 }
 
 NaadCoreCLI::~NaadCoreCLI() {
@@ -238,11 +235,12 @@ int NaadCoreCLI::run() {
         });
     }
     
-    // Setup signal handlers
+    // Setup signal handlers - use a static variable to track running state
+    static volatile sig_atomic_t running_flag = 1;
     struct sigaction sa;
     sa.sa_handler = [](int signum) {
         std::cout << "\nReceived signal " << signum << ", shutting down..." << std::endl;
-        exit(0);
+        running_flag = 0;
     };
     sa.sa_flags = 0;
     sigemptyset(&sa.sa_mask);
@@ -261,7 +259,7 @@ int NaadCoreCLI::run() {
     fcntl(STDIN_FILENO, F_SETFL, stdin_flags | O_NONBLOCK);
     
     // Main loop - process MIDI events and stdin commands
-    while (running_) {
+    while (running_flag) {
         // Create fd_set for select()
         fd_set read_fds;
         FD_ZERO(&read_fds);
@@ -277,7 +275,7 @@ int NaadCoreCLI::run() {
             }
         }
         
-        // Use a small timeout to allow checking running_ flag
+        // Use a small timeout to allow checking running_flag
         struct timeval timeout;
         timeout.tv_sec = 0;
         timeout.tv_usec = 10000; // 10ms
