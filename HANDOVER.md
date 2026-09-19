@@ -1,10 +1,10 @@
 # NaadCore Handover — Authoritative State Document
 
-Last updated: 2026-09-19 (harmonium realism effort Phases 0–6 COMPLETE —
-the harmonium plugin is feature-complete: voicing, envelope shaping,
-double-reed shimmer, coupler/sub-octave layers, drone, key-click,
-micro-variation; reference A/B package prepared; next NaadCore focus is
-other plugins)
+Last updated: 2026-09-19 (harmonium realism Phases 0–6 COMPLETE +
+**Phase A: audio OUTPUT DEVICE selection** — `--audio-device` CLI flag →
+PluginManager → pre-init `set_config("audio_device")` → plugin maps it per
+driver into FluidSynth settings; well-known environment keys convention
+formalized in docs; next NaadCore focus is other plugins)
 
 ## Project purpose
 
@@ -62,7 +62,7 @@ naadcore/
 │   └── plugin_manager.cpp          # PluginManager implementation (dlopen/dlsym, routing)
 ├── apps/naadcore-cli/              # CLI application target: naadcore-cli
 │   ├── CMakeLists.txt
-│   └── main.cpp                    # Arg parsing (--plugin/--midi/--audio-driver/--help), MIDI routing loop
+│   └── main.cpp                    # Arg parsing (--plugin/--midi/--audio-driver/--audio-device/--help), MIDI routing loop
 ├── plugins/
 │   ├── README.md                   # Plugin directory overview
 │   └── harmonium/                   # Plugin target: harmonium_plugin
@@ -153,6 +153,7 @@ Expected console output (order may vary slightly):
 
 ```
 Loading plugin: ./build/plugins/libharmonium_plugin.so
+Synth audio: driver=alsa device=default
 Synth voicing: gain=0.4 reverb=on chorus=off interp=4th-order
 Synth envelope: attack_ms=10 release_ms=200
 Loaded SoundFont: /home/nil/Projects/Personal/naadcore/plugins/harmonium/soundfonts/harmonium_v3.sf2 (ID: 1)
@@ -222,17 +223,90 @@ Lifecycle: `dlopen` → `naad_plugin_create()` → `init(driver)` → `start_aud
 PluginManager (singleton) API: `load_plugin(path)`, `unload_plugin(path)`,
 `route_midi_event(event)`, `get_plugin_info(path)`, `is_plugin_loaded(path)`,
 `get_loaded_plugins()`, `set_audio_driver(driver)` (driver passed to plugins
-at `init()`; empty/nullptr = plugin's own default), `initialize(audio_driver)`,
+at `init()`; empty/nullptr = plugin's own default), `set_audio_device(device)`
+(device handed to plugins via `set_config("audio_device")` before `init()`;
+empty/nullptr = unset), `initialize(audio_driver)`,
 `start_all_audio()`, `stop_all_audio()`, `cleanup()`. Thread-safe (recursive
 mutex).
 
 The CLI parses `--audio-driver <name>` (alsa/pipewire/pulseaudio, default
-alsa) and passes it to the plugin via `PluginManager::set_audio_driver()`
-before loading. Verified: `--audio-driver pulseaudio` starts FluidSynth's
-PulseAudio driver; the native `pipewire` driver fails on this machine's
-FluidSynth 2.4.8 build (missing `pw_init()`, independent of NaadCore) —
-the default `alsa` and `pulseaudio` drivers are both proxied by PipeWire
-anyway.
+alsa) and `--audio-device <name>` (unset by default) and passes both to the
+plugin before loading (`set_audio_driver` + `set_audio_device`; the device
+reaches the plugin via the pre-init `set_config("audio_device")` seam —
+see "Audio OUTPUT DEVICE selection"). Verified: `--audio-driver
+pulseaudio` starts FluidSynth's PulseAudio driver; the native `pipewire`
+driver fails on this machine's FluidSynth 2.4.8 build (missing
+`pw_init()`, independent of NaadCore) — the default `alsa` and
+`pulseaudio` drivers are both proxied by PipeWire anyway.
+
+## Audio OUTPUT DEVICE selection (Phase A, 2026-09-19)
+
+The user can now pick the audio output device per run: `--audio-device
+<name>` (long option only; short `-o`). Design (architect-confirmed):
+**device storage + pass-through = CORE, application mechanism = PLUGIN** —
+the key names are documented **well-known environment keys**
+(convention-over-contract: NO ABI change, no version bump, no new virtual
+methods; see docs/PLUGIN_SYSTEM.md "Well-known environment config keys").
+
+Flow:
+
+```
+CLI --audio-device <name>
+        ↓ PluginManager::set_audio_device()          (mirror of set_audio_driver)
+load_plugin(): AFTER create_func(), BEFORE plugin->init():
+        ↓ plugin->set_config("audio_device", ...)    (config seam; result advisory:
+                                                      OK/NOT_IMPLEMENTED fine, other
+                                                      results warn but never fail)
+plugin init(): audio.alsa.device / audio.pulseaudio.device setstr per driver
+        ↓ start_audio(): new_fluid_audio_driver()    (bad device fails HERE with
+                                                      the clear error, exit != 0)
+```
+
+- **Ordering constraint is load-bearing**: the device must reach the plugin
+  via `set_config` BEFORE `init()`. The driver has an `init()` parameter
+  channel; the device deliberately does NOT (no signature change).
+  PluginManager::initialize() re-applies the device the same way (next to
+  the driver handling) before re-init.
+- **Live switching NOT implemented** — contract: *applies at start; restart
+  the CLI to change* (a driver restart would drone harmonium sustains).
+  Post-init `set_config("audio_device")` stores only (init-only semantics,
+  like `audio_driver`).
+- **No validation at set time** (plugin: `set_config` stores verbatim, `""`
+  = unset); the real validator is `start_audio()` — verified: a
+  nonexistent ALSA PCM fails there with FluidSynth's clear error and the
+  CLI exits non-zero.
+- Per-driver mapping (plugin `init()`, after `audio.driver` setstr): alsa →
+  `audio.alsa.device`, pulseaudio → `audio.pulseaudio.device`, file →
+  silently ignored (the offline renderer owns `audio.file.name`), pipewire
+  → ignored + stderr warning (no device setting exists in FluidSynth's
+  pipewire driver). Unset → FluidSynth defaults. Startup log gained
+  `Synth audio: driver=<d> device=<v|default>` (before the voicing line).
+- Registry row: docs/HARMONIUM_CONFIG.md (15 keys total now).
+- **naadcore.sh: device menu deliberately NOT added** (Phase B pending);
+  the script works unchanged.
+
+**This machine's audio landscape** (inspection 2026-09-19 — validates the
+UX assumptions):
+
+- One sound card: `HDA Intel PCH` (ALC298 analog) + 3 HDMI PCM devices
+  (L27i-4A monitor, 2 unused HDMI). No USB/Bluetooth audio.
+- PipeWire 1.6.2 ("PulseAudio on PipeWire", `pipewire-alsa` proxying):
+  exactly **one sink**, `alsa_output.pci-0000_00_1f.3.analog-stereo`
+  (Built-in Audio Analog Stereo, the default; SUSPENDED when idle), with
+  ports `analog-output-speaker` (Speakers, active) and
+  `analog-output-headphones` (Headphones, not available).
+- ALSA PCM landscape (`aplay -L`): `default`/`pulse` go through PipeWire;
+  `hw:CODE=PCH,DEV=0`… direct hardware names exist for the analog + HDMI
+  devices.
+- UX implication: with one sink and PipeWire routing, `--audio-device
+  default` (or unset) is the right everyday choice; a direct `hw:` device
+  bypasses PipeWire (breaks `parecord --monitor-stream` capture) and
+  speaker/headphone selection stays a PipeWire (pavucontrol/wpctl) job,
+  not a device-name choice.
+
+PluginManager API additions: `set_audio_device(device)` (empty/nullptr =
+unset). The CLI calls it alongside `set_audio_driver()` before
+`load_plugin`.
 
 ## Embedded SoundFont mechanism
 
@@ -334,7 +408,9 @@ Live config keys (via `set_config`/`get_config`, no CLI surface yet):
 | `key_click` | off/low/high | key-click/chiff layer on channel 12 (Phase 6) |
 | `variation` | on/off | per-note velocity micro-variation (Phase 6) |
 
-Plus the pre-existing keys: `soundfont_path`, `audio_driver`.
+Plus the pre-existing keys: `soundfont_path`, `audio_driver`, and (Phase A)
+`audio_device` — the latter two have CLI flags (`--audio-driver`,
+`--audio-device`).
 
 **The authoritative per-key contract** (type/format, defaults, live-vs-init
 semantics, echo behavior, invalid-input behavior, FluidSynth mechanism) now
@@ -809,12 +885,22 @@ Deferred harmonium items (parked — resume only if desired):
    using the same INaadPlugin contract — the portability proof. Lessons
    from the harmonium plugin apply: pin voicing at init, use the config
    seam for instrument controls, keep instrument physics plugin-local
-   (see docs/PLUGIN_DEVELOPMENT.md).
-2. **Multiple plugin support in CLI**: accept several `--plugin` flags or a
+   (see docs/PLUGIN_DEVELOPMENT.md). The **well-known environment keys**
+   convention (`audio_driver`, `audio_device`) is now formalized in
+   docs/PLUGIN_SYSTEM.md + docs/PLUGIN_DEVELOPMENT.md — new plugins
+   SHOULD scaffold both keys (the sample plugin shows the pattern).
+2. **Phase B (launcher device menu)**: add an audio-device selection step
+   to `naadcore.sh` next to the driver menu (enumerate ALSA PCMs via
+   `aplay -L` and/or sinks via `pactl list short sinks`; PipeWire routing
+   note: on this machine `default` + pavucontrol/wpctl handles
+   speaker/headphone choice). NOT done in Phase A by design.
+3. **Multiple plugin support in CLI**: accept several `--plugin` flags or a
    plugin directory; route MIDI to all loaded plugins (PluginManager already
    fans out). NOTE: plugins each own their audio output device — multi-plugin
-   fan-out will hit ALSA device contention; a host-owned audio engine or a
-   shared PipeWire graph decision is needed before this is real.
+   fan-out will hit ALSA device contention (a raw `hw:` device is exclusive;
+   sink-level `default` devices accept multiple streams — see
+   docs/PLUGIN_DEVELOPMENT.md "Environment keys"); a host-owned audio engine
+   or a shared PipeWire graph decision is needed before this is real.
 3. **Plugin configuration surface**: wire `set_config/get_config` to CLI
    flags, a config file, or MIDI CC mappings (the harmonium pattern:
    in-plugin CC mappings avoid CLI changes).

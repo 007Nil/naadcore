@@ -7,6 +7,33 @@
 
 namespace naadcore {
 
+namespace {
+
+/**
+ * Apply the well-known "audio_device" environment key to a plugin via the
+ * config seam. MUST be called before plugin->init() so the device reaches
+ * the plugin's synth settings before it creates its audio driver.
+ *
+ * The result is advisory: PLUGIN_OK is expected, PLUGIN_NOT_IMPLEMENTED is
+ * acceptable degradation (a plugin that does not know the key just runs on
+ * its own default), and any other result is logged as a warning but never
+ * fails the load/init — a genuinely unusable device fails later, at
+ * start_audio(), where the error is actionable.
+ */
+void apply_audio_device_config(INaadPlugin* plugin, const std::string& id,
+                               const std::string& device) {
+    if (device.empty()) {
+        return;
+    }
+    const PluginResult cfg = plugin->set_config("audio_device", device.c_str());
+    if (cfg != PLUGIN_OK && cfg != PLUGIN_NOT_IMPLEMENTED) {
+        std::cerr << "Warning: plugin did not accept the audio_device key ("
+                  << id << ", result " << cfg << ")" << std::endl;
+    }
+}
+
+} // namespace
+
 PluginManager::PluginManager() = default;
 
 PluginManager::~PluginManager() {
@@ -58,6 +85,13 @@ PluginResult PluginManager::load_plugin(const std::string& path) {
         dlclose(handle);
         return PLUGIN_ERROR;
     }
+
+    // Ordering constraint (load-bearing): the audio output device must
+    // reach the plugin via set_config BEFORE init(), so the plugin can put
+    // it into its synth settings before it creates its audio driver at
+    // start_audio(). (The driver has an init() parameter channel; the
+    // device deliberately does not — no interface signature change.)
+    apply_audio_device_config(plugin, path, audio_device_);
 
     // Initialize plugin
     PluginResult result = plugin->init(audio_driver_.empty() ? nullptr : audio_driver_.c_str());
@@ -174,13 +208,23 @@ void PluginManager::set_audio_driver(const char* audio_driver) {
     audio_driver_ = audio_driver ? audio_driver : "";
 }
 
+void PluginManager::set_audio_device(const char* audio_device) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    audio_device_ = audio_device ? audio_device : "";
+}
+
 PluginResult PluginManager::initialize(const char* audio_driver) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     
     audio_driver_ = audio_driver ? audio_driver : "alsa";
     
-    // Initialize all loaded plugins
+    // Initialize all loaded plugins. The audio_device key is re-applied
+    // via the config seam before each init() (same ordering constraint as
+    // load_plugin: the device must be in the plugin's settings before its
+    // audio driver is created).
     for (auto& pair : plugins_) {
+        apply_audio_device_config(pair.second.plugin, pair.first,
+                                  audio_device_);
         PluginResult result = pair.second.plugin->init(audio_driver_.c_str());
         if (result != PLUGIN_OK) {
             std::cerr << "Failed to reinitialize plugin: " << pair.first << std::endl;

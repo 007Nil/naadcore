@@ -77,6 +77,15 @@ public:
     void set_audio_driver(const char* audio_driver);
 
     /**
+     * @brief Set the audio output device handed to plugins via the config
+     *        seam before init (well-known "audio_device" key)
+     * @param audio_device Device name (machine-specific: e.g. an ALSA PCM
+     *        name or a PulseAudio sink name), or nullptr/empty for the
+     *        plugin's own default
+     */
+    void set_audio_device(const char* audio_device);
+
+    /**
      * @brief Initialize plugin system
      * @param audio_driver Audio driver to use for plugins
      * @return PLUGIN_OK on success, error code otherwise
@@ -116,6 +125,7 @@ private:
     std::unordered_map<std::string, PluginHandle> plugins_;
     mutable std::recursive_mutex mutex_;
     std::string audio_driver_;
+    std::string audio_device_;
 };
 
 } // namespace naadcore

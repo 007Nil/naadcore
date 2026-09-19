@@ -62,6 +62,43 @@ extern "C" {
 }
 ```
 
+## Well-known environment config keys
+
+The host passes the user's audio environment to plugins through the config
+seam (`set_config`) **BEFORE** `init()`. These keys are optional
+capabilities, not ABI: `naad_plugin_get_version()` does NOT bump for
+well-known keys, and no new virtual methods were added.
+
+| Key | Meaning | Backing FluidSynth setting (harmonium) |
+|---|---|---|
+| `audio_driver` | Audio driver name (`alsa`, `pipewire`, `pulseaudio`, `file`, ...) | `audio.driver` |
+| `audio_device` | Audio output device name (machine-specific: an ALSA PCM name such as `default` or `plughw:CARD=PCH,DEV=0`, or a PulseAudio sink name) | `audio.alsa.device` / `audio.pulseaudio.device` (mapped per driver at init) |
+
+Rules:
+
+- Plugins **SHOULD honor these keys or MAY return `PLUGIN_NOT_IMPLEMENTED`**
+  from `set_config` — that is acceptable degradation, not an error (such a
+  plugin simply runs on its own default). The host never fails a load over
+  an unexpected `set_config` result; it only logs a warning.
+- **The host applies both keys BEFORE `init()`** via `set_config` (the
+  config seam). `audio_driver` is additionally the `init()` argument, which
+  takes precedence over the stored `audio_driver` config value; the device
+  deliberately has no `init()` parameter (no interface signature change) —
+  the config seam is its only channel.
+- **Validation happens at start, not at set time.** Device/driver names are
+  machine-specific, so neither the host nor a well-behaved plugin rejects
+  them at `set_config`; an unusable driver or device fails at
+  `start_audio()` with `PLUGIN_ERROR` (e.g. `new_fluid_audio_driver`
+  rejecting a bad ALSA PCM name), where the error is actionable.
+- **Applies at start; restart to change.** A running instance's audio
+  driver is not restarted (a driver restart would drone harmonium-style
+  sustains), so a post-init `set_config("audio_device")` stores only — the
+  CLI must be restarted to apply a new device/driver.
+- For FluidSynth-based plugins the device string must be in the
+  `fluid_settings` **before** `new_fluid_audio_driver` is called (i.e. at
+  `init()`); see docs/PLUGIN_DEVELOPMENT.md "Environment keys every plugin
+  SHOULD support" for the timing rule and multi-plugin caveats.
+
 ## Building a Plugin
 
 ### 1. Create the Plugin Header

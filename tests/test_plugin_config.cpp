@@ -63,6 +63,7 @@ int main(int argc, char** argv) {
     check_eq("default reverb", p->get_config("reverb"), "on");
     check_eq("default chorus", p->get_config("chorus"), "off");
     check_eq("default audio_driver", p->get_config("audio_driver"), "alsa");
+    check_eq("default audio_device", p->get_config("audio_device"), "");
     check_eq("default attack_ms", p->get_config("attack_ms"), "10");
     check_eq("default release_ms", p->get_config("release_ms"), "200");
     check_eq("default stop", p->get_config("stop"), "single");
@@ -190,6 +191,51 @@ int main(int argc, char** argv) {
     check_result("soundfont_path set", p->set_config("soundfont_path", "/x"),
                  naadcore::PLUGIN_OK);
     check_eq("soundfont_path reads", p->get_config("soundfont_path"), "/x");
+
+    // ---- Audio output device selection (well-known "audio_device" key).
+    // Headless: the fluidsettings write itself is init-time and is proven
+    // by the CLI smoke runs (--audio-device with a real/bad device); here
+    // we verify the seam: storage, echo, no-validation contract and
+    // init-only semantics. ----
+
+    // set/get round-trip (verbatim storage, machine-specific names)
+    check_result("audio_device set", p->set_config("audio_device",
+                                                   "plughw:CARD=PCH,DEV=0"),
+                 naadcore::PLUGIN_OK);
+    check_eq("audio_device reads", p->get_config("audio_device"),
+             "plughw:CARD=PCH,DEV=0");
+
+    // NO validation by design: junk strings accepted (never
+    // PLUGIN_INVALID_PARAM) — the real validator is start_audio, where a
+    // bad device fails driver creation
+    check_result("audio_device junk accepted",
+                 p->set_config("audio_device", "not_a_real_pcm !@#"),
+                 naadcore::PLUGIN_OK);
+    check_eq("audio_device junk echoes", p->get_config("audio_device"),
+             "not_a_real_pcm !@#");
+
+    // empty-string set normalizes to unset ("" echo = plugin default)
+    check_result("audio_device empty accepted",
+                 p->set_config("audio_device", ""), naadcore::PLUGIN_OK);
+    check_eq("audio_device empty reads unset",
+             p->get_config("audio_device"), "");
+    // verbatim storage: even a lone space is a (weird) device name
+    check_result("audio_device space accepted",
+                 p->set_config("audio_device", " "), naadcore::PLUGIN_OK);
+    check_eq("audio_device space echoes verbatim",
+             p->get_config("audio_device"), " ");
+
+    // post-init set is accepted (init-only semantics, like audio_driver):
+    // no crash, echo reflects the stored value, running driver untouched
+    check_result("audio_device post-init set accepted",
+                 p->set_config("audio_device", "default"), naadcore::PLUGIN_OK);
+    check_eq("audio_device post-init echo",
+             p->get_config("audio_device"), "default");
+    // restore unset for the note-flow checks below
+    check_result("audio_device restore unset",
+                 p->set_config("audio_device", ""), naadcore::PLUGIN_OK);
+    check_eq("audio_device unset after restore",
+             p->get_config("audio_device"), "");
 
     // reed stops (Phase 3: stop key, preset mapping single=0 / double=1)
     check_result("stop double", p->set_config("stop", "double"),
@@ -696,6 +742,13 @@ int main(int argc, char** argv) {
                  naadcore::PLUGIN_OK);
     check_result("pre-init variation off", q->set_config("variation", "off"),
                  naadcore::PLUGIN_OK);
+    // audio_device: pre-init storage (the path PluginManager::load_plugin
+    // uses — it must be accepted before init and echo after it)
+    check_result("pre-init audio_device", q->set_config("audio_device",
+                                                        "default"),
+                 naadcore::PLUGIN_OK);
+    check_eq("pre-init audio_device stored", q->get_config("audio_device"),
+             "default");
     check_eq("pre-init drone stored", q->get_config("drone"), "48,55");
     check_eq("pre-init drone_level stored", q->get_config("drone_level"),
              "50");
@@ -717,6 +770,21 @@ int main(int argc, char** argv) {
     check_eq("pre-init key_click applied", q->get_config("key_click"),
              "high");
     check_eq("pre-init variation applied", q->get_config("variation"), "off");
+    check_eq("pre-init audio_device applied", q->get_config("audio_device"),
+             "default");
+    // init-time per-driver mapping is proven by the smoke runs; at the
+    // seam level the stored value must survive init unchanged
+    // (alsa/default: "audio.alsa.device" was set from it during init).
+    // Post-init set accepted (init-only): stores for the next run only.
+    check_result("audio_device post-init live set",
+                 q->set_config("audio_device", "hw:CARD=PCH,DEV=0"),
+                 naadcore::PLUGIN_OK);
+    check_eq("audio_device post-init live echo",
+             q->get_config("audio_device"), "hw:CARD=PCH,DEV=0");
+    check_result("audio_device post-init live unset",
+                 q->set_config("audio_device", ""), naadcore::PLUGIN_OK);
+    check_eq("audio_device post-init live unset reads",
+             q->get_config("audio_device"), "");
     // live Phase 6 changes after a pre-init config
     check_result("pre-init key_click live low", q->set_config("key_click", "low"),
                  naadcore::PLUGIN_OK);

@@ -1,14 +1,16 @@
 # Harmonium Plugin — Config-Key Registry (authoritative)
 
 Every key accepted by `set_config()` / `get_config()` on the harmonium plugin
-(`plugins/harmonium/harmonium_plugin.cpp`), Phases 1–6 combined. This is the
-authoritative reference; HANDOVER.md gives the design narrative, this file the
-contract. Each row was verified against the implementation (2026-09-19,
-Phase 6).
+(`plugins/harmonium/harmonium_plugin.cpp`), Phases 1–6 plus the Phase A audio
+output device key. This is the authoritative reference; HANDOVER.md gives the
+design narrative, this file the contract. Each row was verified against the
+implementation (2026-09-19, Phase 6 + Phase A).
 
-All keys are plugin-only — there is no CLI flag surface yet (see
-HANDOVER.md "Suggested next steps"); the offline renderer
-(`tests/scripts/run_render_plugin.sh`) can pass any of them as trailing
+Most keys are plugin-only — no CLI flag surface. Two environment keys DO
+have CLI flags: `audio_driver` (`--audio-driver`) and `audio_device`
+(`--audio-device`); the CLI hands them to PluginManager, which applies both
+via `set_config` **before** `init()`. The offline renderer
+(`tests/scripts/run_render_plugin.sh`) can pass any key as trailing
 `KEY=VALUE` pairs applied via `set_config` **before** `init()`.
 
 ## Key table
@@ -17,6 +19,7 @@ HANDOVER.md "Suggested next steps"); the offline renderer
 |---|---|---|---|---|---|---|---|
 | `soundfont_path` | string (filesystem path) | compiled-in `HARMONIUM_SOUNDFONT_PATH` (in-repo `harmonium_v3.sf2`) | any string (not validated) | **init-only** — used by `sfload` at `init()`; setting it after init does NOT reload | stored string | never rejected; a bad path fails `init()` with `PLUGIN_ERROR` ("Failed to load SoundFont") | `fluid_synth_sfload` |
 | `audio_driver` | string | `alsa` | any string (FluidSynth validates at driver creation) | **init-only** — written to settings before the driver is created; the `init(driver)` argument overrides the stored value | stored string | never rejected; an unusable driver fails `start_audio()` with `PLUGIN_ERROR` | `fluid_settings_setstr("audio.driver")` + `new_fluid_audio_driver` |
+| `audio_device` | string | unset (`""`) | any string — **NOT validated** (device names are machine-specific: ALSA PCM names like `default` / `plughw:CARD=PCH,DEV=0`, PulseAudio sink names like `alsa_output.pci-0000_00_1f.3.analog-stereo`) | **init-only** — mapped into the FluidSynth settings at `init()` (per driver, see mechanism); the audio driver itself is created later at `start_audio()`, where an unusable device fails with `PLUGIN_ERROR` ("Failed to create audio driver") | stored string, verbatim (`""` = unset) | never rejected — no validation at set time by design (the host may pass any name; a bad one is caught at `start_audio()`) | per-driver mapping at init: alsa → `fluid_settings_setstr("audio.alsa.device")`, pulseaudio → `audio.pulseaudio.device`, file → ignored silently (the offline renderer owns `audio.file.name`), pipewire → ignored with a stderr warning (no device setting exists in FluidSynth's pipewire driver); unset = the driver's own default device |
 | `gain` | float | `0.4` (echoed `0.400`) | 0.0 – 10.0 inclusive | **live** | re-reads the synth (`fluid_synth_get_gain`), printed `%.3f` | `PLUGIN_INVALID_PARAM` (junk, trailing chars, empty, NaN/Inf, out of range); state unchanged | `fluid_synth_set_gain` |
 | `reverb` | enum | `on` | `on` \| `off` (case-sensitive, exact) | **live** | `on` / `off` | `PLUGIN_INVALID_PARAM`; state unchanged | `fluid_synth_reverb_on(synth, -1, …)` (all groups); room/damp/width/level pinned at init (0.2/0.0/0.3/0.4) |
 | `chorus` | enum | `off` | `on` \| `off` (case-sensitive, exact) | **live** | `on` / `off` | `PLUGIN_INVALID_PARAM`; state unchanged | `fluid_synth_chorus_on(synth, -1, …)` |
@@ -67,3 +70,6 @@ HANDOVER.md "Suggested next steps"); the offline renderer
 - Phase 4 (2026-09-19): `coupler`, `sub_octave`.
 - Phase 5 (2026-09-19): `drone`, `drone_level`; this registry created.
 - Phase 6 (2026-09-19): `key_click`, `variation` (14 keys total).
+- Phase A (2026-09-19): `audio_device` — well-known audio output device key
+  (CLI `--audio-device`, applied by the host pre-init; see
+  docs/PLUGIN_SYSTEM.md "Well-known environment config keys"), 15 keys total.

@@ -94,8 +94,25 @@ timeout 5 ./build/apps/naadcore-cli/naadcore-cli --plugin ./build/plugins/libhar
 --plugin <path>       Path to plugin shared library (.so) (required)
 --midi <client:port>  ALSA sequencer client:port for MIDI input (e.g. 20:0)
 --audio-driver <name> Audio driver: alsa, pipewire, pulseaudio (default: alsa)
+--audio-device <name> Audio output device passed to the plugin (unset =
+                      plugin default). Applies at start — restart the CLI
+                      to change it
 --help                Show this help message
 ```
+
+`--audio-device` is driver-specific:
+
+- With the default `alsa` driver, an ALSA PCM name — e.g. `default`,
+  `plughw:CARD=PCH,DEV=0`, or a hardware name from `aplay -L`. **Honest
+  note for this laptop:** the default routes through PipeWire anyway
+  (`pipewire-alsa` proxies the ALSA stream), so with `default` the
+  destination port — speaker vs headphone jack — is chosen by PipeWire
+  routing (pavucontrol / `wpctl`), not by this flag; a direct
+  `hw:`/`plughw:` device bypasses PipeWire entirely (and breaks
+  `parecord --monitor-stream` capture).
+- With `pulseaudio`, a sink name from `pactl list short sinks`.
+- The native `pipewire` driver has no device setting in this FluidSynth
+  build — a device there is ignored with a warning.
 
 There is no `--soundfont` flag: SoundFonts are embedded in plugins at build time.
 

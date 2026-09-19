@@ -35,7 +35,7 @@ tests/
 ├── test_plugin_config.cpp # config-seam tests (gain/reverb/chorus +
 │                          #   attack_ms/release_ms + stop + coupler/
 │                          #   sub_octave + drone/drone_level + key_click/
-│                          #   variation live keys, 267 checks)
+│                          #   variation + audio_device keys, 287 checks)
 ├── renders/               # rendered/captured WAVs (gitignored)
 ├── references/            # personal-use reference clips (gitignored)
 ├── RESULTS.md             # A/B score sheet + objective measurements
@@ -93,7 +93,8 @@ python3 tests/analyze.py tests/renders/baseline_phase0_sf2_T1_single_note_envelo
 python3 tests/analyze.py tests/renders/<capture>.wav <timing.txt>
 
 # 6. Config-seam unit tests (all keys: gain/reverb/chorus/attack_ms/
-#    release_ms/stop/coupler/sub_octave/drone/drone_level/key_click/variation)
+#    release_ms/stop/coupler/sub_octave/drone/drone_level/key_click/
+#    variation/audio_device)
 tests/scripts/run_config_tests.sh
 
 # 7. Offline render through the REAL plugin (no audio hardware needed;
@@ -138,6 +139,14 @@ that analyze.py applies automatically.
 The pure-ALSA snd-aloop fallback in the script (modprobe snd-aloop +
 `~/.asoundrc` redirect + `arecord -D plughw:Loopback,1,0`) was NOT needed
 here and is untested on this machine (modprobe needs root).
+
+**Capture caveat with `--audio-device` (Phase A):** a direct hardware
+device (`hw:`/`plughw:`) passed to the CLI bypasses PipeWire entirely, so
+no sink-input appears in the PipeWire graph and `parecord
+--monitor-stream` capture (capture_live.sh) cannot see the stream — for
+captures either omit `--audio-device`, use `default`, or use the
+pulseaudio driver with the sink name. (Phase B pending: the launcher's
+device menu — for now `--audio-device` is CLI-flag only.)
 
 ## Plugin-in-loop offline rendering (Phase 2, 2026-09-18)
 

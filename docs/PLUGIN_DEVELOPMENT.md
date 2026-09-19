@@ -57,6 +57,7 @@ public:
 private:
     // Your plugin's internal state
     std::string audio_driver_;
+    std::string audio_device_;  // well-known environment key, see below
     void* synthesizer_;  // Replace with your actual synthesizer
 };
 
@@ -103,6 +104,21 @@ PluginResult MyPlugin::init(const char* audio_driver) {
     
     // Initialize your synthesizer here
     // Load SoundFont from embedded path
+    
+    // Environment keys (see "Environment keys every plugin SHOULD
+    // support" below): the device string must be in your synth settings
+    // BEFORE you create the audio driver (start_audio). Per-driver
+    // mapping, e.g. for FluidSynth:
+    if (!audio_device_.empty()) {
+        if (audio_driver_ == "alsa") {
+            fluid_settings_setstr(settings_, "audio.alsa.device",
+                                  audio_device_.c_str());
+        } else if (audio_driver_ == "pulseaudio") {
+            fluid_settings_setstr(settings_, "audio.pulseaudio.device",
+                                  audio_device_.c_str());
+        }
+    }
+    
     std::cout << "Initializing MyPlugin with audio driver: " << audio_driver_ << std::endl;
     
     return PLUGIN_OK;
@@ -158,6 +174,9 @@ std::string MyPlugin::get_config(const char* key) {
     if (k == "audio_driver") {
         return audio_driver_;
     }
+    if (k == "audio_device") {
+        return audio_device_;  // "" = unset (plugin default device)
+    }
     
     return "";
 }
@@ -170,6 +189,14 @@ PluginResult MyPlugin::set_config(const char* key, const char* value) {
     std::string k = key;
     if (k == "audio_driver") {
         audio_driver_ = value;
+        return PLUGIN_OK;
+    }
+    if (k == "audio_device") {
+        // Well-known environment key (the host applies it BEFORE init()).
+        // Store verbatim — NO validation at set time (device names are
+        // machine-specific); an unusable device fails start_audio().
+        // Empty string = unset (plugin default device).
+        audio_device_ = value;
         return PLUGIN_OK;
     }
     
@@ -290,6 +317,11 @@ build/plugins/libmy_plugin.so
 # With audio driver override
 ./build/apps/naadcore-cli/naadcore-cli --plugin ./build/plugins/libmy_plugin.so --midi 20:0 --audio-driver pipewire
 
+# With an explicit audio output device (driver-specific: ALSA PCM name or
+# PulseAudio sink name; unset = the plugin's default device). Applies at
+# start — restart the CLI to change it.
+./build/apps/naadcore-cli/naadcore-cli --plugin ./build/plugins/libmy_plugin.so --midi 20:0 --audio-driver alsa --audio-device default
+
 # Show help
 ./build/apps/naadcore-cli/naadcore-cli --help
 ```
@@ -309,6 +341,40 @@ Expected output:
 ```
 
 ## Plugin Interface Reference
+
+### Environment keys every plugin SHOULD support
+
+The host hands the user's audio environment to every plugin through the
+config seam (`set_config`) **BEFORE** `init()`. These keys are optional
+capabilities, not ABI — `naad_plugin_get_version()` does NOT bump for them.
+
+| Key | Meaning | Typical backing setting (FluidSynth) |
+|---|---|---|
+| `audio_driver` | Audio driver name (`alsa`, `pipewire`, `pulseaudio`, `file`, ...) | `audio.driver` |
+| `audio_device` | Audio output device name (an ALSA PCM name, a PulseAudio sink name, ...) | `audio.alsa.device` / `audio.pulseaudio.device` |
+
+Contract:
+
+- **Honor them or return `PLUGIN_NOT_IMPLEMENTED`** — both are acceptable;
+  the host treats a non-OK, non-`PLUGIN_NOT_IMPLEMENTED` result as a warning
+  only and never fails the load.
+- **Timing rule:** the host applies both keys via `set_config` before
+  `init()`. For FluidSynth-based plugins the device string must be in the
+  `fluid_settings` **before** `new_fluid_audio_driver` is called (i.e. map
+  it in `init()`, per driver — see the `init()` snippet in Step 2 above).
+  The audio driver itself is created at `start_audio()`.
+- **No validation at set time.** Store the value verbatim; device names are
+  machine-specific and the real validator is `start_audio()`, where a bad
+  device fails driver creation with `PLUGIN_ERROR` and a clear message.
+  `""` = unset → the plugin's own default device.
+- **Applies at start only.** A post-init `set_config("audio_device")` is
+  stored for the NEXT run; the running driver is never restarted (that
+  would drone sustains).
+- **Multi-plugin note:** with several plugins loaded at once, a
+  `default` PipeWire/PulseAudio sink accepts multiple plugin streams
+  (they mix in the PipeWire graph), but a raw hardware device
+  (`hw:...`/`plughw:...`) is exclusive — a second plugin would fail to
+  open it. Prefer sink-level devices when fanning out.
 
 ### INaadPlugin Interface
 

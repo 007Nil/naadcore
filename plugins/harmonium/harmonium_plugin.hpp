@@ -44,6 +44,19 @@ private:
     fluid_synth_t* synth_;
     fluid_audio_driver_t* driver_;
     std::string audio_driver_;
+    // Audio output device (well-known "audio_device" config key, applied
+    // by the host via the config seam BEFORE init()). "" = unset → the
+    // FluidSynth driver's own default device. Stored verbatim, NO
+    // validation at set time (device names are machine-specific — ALSA
+    // PCM names, PulseAudio sink names); the real validator is
+    // start_audio(), where a genuinely unusable device fails
+    // new_fluid_audio_driver() with the clear error. Mapped per driver at
+    // init(): alsa → "audio.alsa.device", pulseaudio →
+    // "audio.pulseaudio.device", file → ignored silently (the offline
+    // renderer owns "audio.file.name"), pipewire → ignored with a warning
+    // (no device setting exists in FluidSynth's pipewire driver).
+    // Applies at start only (init-only semantics, like audio_driver).
+    std::string audio_device_;
     std::string soundfont_path_;
     int soundfont_id_;  ///< ID of the loaded SoundFont (-1 until loaded)
 

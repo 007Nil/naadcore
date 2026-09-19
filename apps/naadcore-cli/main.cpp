@@ -26,6 +26,7 @@ private:
     std::string plugin_path_;
     std::string midi_input_str_;
     std::string audio_driver_;
+    std::string audio_device_;
     bool show_help_;
     
     bool running_;
@@ -34,7 +35,8 @@ private:
 };
 
 NaadCoreCLI::NaadCoreCLI() 
-    : plugin_path_(""), midi_input_str_(""), audio_driver_("alsa"), show_help_(false), running_(false) {
+    : plugin_path_(""), midi_input_str_(""), audio_driver_("alsa"),
+      audio_device_(""), show_help_(false), running_(false) {
 }
 
 NaadCoreCLI::~NaadCoreCLI() {
@@ -50,6 +52,12 @@ void NaadCoreCLI::print_usage(const char* program_name) {
               << "                        (required for plugin mode)\n"
               << "  --midi <client:port>  ALSA sequencer client:port for MIDI input\n"
               << "  --audio-driver <name> Audio driver: alsa, pipewire, pulseaudio\n"
+              << "  --audio-device <name> Audio output device passed to the plugin\n"
+              << "                        (driver-specific: ALSA PCM name like\n"
+              << "                        plughw:CARD=PCH,DEV=0 or \"default\",\n"
+              << "                        PulseAudio sink name; unset = plugin\n"
+              << "                        default). Applies at start — restart\n"
+              << "                        the CLI to change it\n"
               << "  --help                Show this help message\n"
               << "\n"
               << "Examples:\n"
@@ -64,6 +72,7 @@ bool NaadCoreCLI::parse_args(int argc, char* argv[]) {
         {"plugin", required_argument, 0, 'p'},
         {"midi", required_argument, 0, 'm'},
         {"audio-driver", required_argument, 0, 'd'},
+        {"audio-device", required_argument, 0, 'o'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
@@ -71,7 +80,7 @@ bool NaadCoreCLI::parse_args(int argc, char* argv[]) {
     int options_index = 0;
     int c;
     
-    while ((c = getopt_long(argc, argv, "p:m:d:h", long_options, &options_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "p:m:d:o:h", long_options, &options_index)) != -1) {
         switch (c) {
             case 'p':
                 plugin_path_ = optarg;
@@ -81,6 +90,9 @@ bool NaadCoreCLI::parse_args(int argc, char* argv[]) {
                 break;
             case 'd':
                 audio_driver_ = optarg;
+                break;
+            case 'o':
+                audio_device_ = optarg;
                 break;
             case 'h':
                 show_help_ = true;
@@ -115,6 +127,10 @@ int NaadCoreCLI::run() {
     
     PluginManager& pm = PluginManager::instance();
     pm.set_audio_driver(audio_driver_.c_str());
+    // Must be set BEFORE load_plugin(): PluginManager applies the device
+    // via set_config("audio_device") before plugin->init() so the plugin
+    // puts it into its synth settings before creating its audio driver.
+    pm.set_audio_device(audio_device_.c_str());
     PluginResult result = pm.load_plugin(plugin_path_);
     if (result != PLUGIN_OK) {
         std::cerr << "Failed to load plugin: " << plugin_path_ << std::endl;

@@ -77,6 +77,42 @@ PluginResult HarmoniumPlugin::init(const char* audio_driver) {
     }
     fluid_settings_setstr(settings_, "audio.driver", audio_driver_.c_str());
 
+    // Audio output device (well-known "audio_device" config key, applied
+    // by the host via set_config BEFORE init — the load_plugin ordering
+    // constraint). The device string must be in the fluid_settings
+    // BEFORE new_fluid_audio_driver (start_audio), so this is the only
+    // place it can be mapped. FluidSynth has a separate per-driver device
+    // setting:
+    //   alsa       -> "audio.alsa.device" (ALSA PCM name, e.g. "default",
+    //                 "plughw:CARD=PCH,DEV=0")
+    //   pulseaudio -> "audio.pulseaudio.device" (sink name)
+    //   file       -> no device (the renderer owns "audio.file.name")
+    //   pipewire   -> no device setting exists in FluidSynth's pipewire
+    //                 driver — ignored with a warning
+    // Unset ("") leaves the driver's own default device untouched.
+    // Applies at start only: the driver is created once in start_audio();
+    // a post-init set_config stores for the next run (init-only, like
+    // audio_driver) — changing the device mid-run would require deleting
+    // and re-creating the driver, which would drone harmonium sustains.
+    const bool device_set = !audio_device_.empty();
+    if (device_set) {
+        if (audio_driver_ == "alsa") {
+            fluid_settings_setstr(settings_, "audio.alsa.device",
+                                  audio_device_.c_str());
+        } else if (audio_driver_ == "pulseaudio") {
+            fluid_settings_setstr(settings_, "audio.pulseaudio.device",
+                                  audio_device_.c_str());
+        } else if (audio_driver_ == "pipewire") {
+            std::cerr << "Warning: audio_device '" << audio_device_
+                      << "' ignored — no device setting exists in "
+                      << "FluidSynth's pipewire driver" << std::endl;
+        }
+        // "file" and any other driver: silently ignored (no device knob).
+    }
+    std::cout << "Synth audio: driver=" << audio_driver_
+              << " device=" << (device_set ? audio_device_ : "default")
+              << std::endl;
+
     // Synth voicing: modest reverb ("small room"), no chorus, 4th-order
     // interpolation. Gain/reverb/chorus are live-adjustable via set_config.
     fluid_synth_set_gain(synth_, gain_);
@@ -684,6 +720,9 @@ std::string HarmoniumPlugin::get_config(const char* key) {
     if (k == "audio_driver") {
         return audio_driver_;
     }
+    if (k == "audio_device") {
+        return audio_device_;  // "" = unset (plugin default device)
+    }
     if (k == "gain") {
         if (synth_) {
             gain_ = fluid_synth_get_gain(synth_);
@@ -742,6 +781,17 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
     }
     if (k == "audio_driver") {
         audio_driver_ = value;
+        return PLUGIN_OK;
+    }
+    if (k == "audio_device") {
+        // Well-known environment key (host applies it pre-init). No
+        // validation by design: device names are machine-specific and the
+        // real validator is start_audio(), where a bad device fails
+        // driver creation with the clear error (same style as the
+        // audio_driver key). Empty string normalizes to unset (plugin
+        // default device). Mirrors audio_driver: stored only — the
+        // running driver is never touched post-init.
+        audio_device_ = value;
         return PLUGIN_OK;
     }
     if (k == "gain") {
