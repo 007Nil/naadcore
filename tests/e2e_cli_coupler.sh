@@ -13,6 +13,11 @@
 #      and stays alive (exit 124), instead of busy-spinning or exiting.
 #   3. Sanity: the startup build-id banner matches `git rev-parse --short
 #      HEAD` (catches stale-binary confusion at a glance).
+#   4. Acoustic proof (tests/scripts/check_coupler_acoustic.sh): renders
+#      the coupler probe OFF/ON through the real plugin and asserts the
+#      octave-up voice is audible in the ON render (spectral presence +
+#      placement + octave-line growth). Catches wrong-pitch/silent-layer
+#      regressions that state-level output checks cannot see.
 #
 # Usage: bash tests/e2e_cli_coupler.sh   (from anywhere; paths are resolved
 # relative to the repo root, which is derived from this script's location)
@@ -104,6 +109,18 @@ if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --short HEAD >/dev
     fi
 else
     printf 'SKIPPED: check 3 (git unavailable or not a repo)\n'
+fi
+
+# ---------------------------------------------------------------- check 4
+# Acoustic coupler proof: "coupler works" means the octave-up voice (note+12
+# on ch 15) is AUDIBLE in a render, not that the status string says "on".
+# Catches the 2026-09-19 subsonic-tuning bug class that all state-level
+# checks missed (the coupler voice "played" at ~8 Hz — inaudible rumble).
+printf '==> Check 4: acoustic coupler proof (octave voice in render)\n'
+if bash "$ROOT/tests/scripts/check_coupler_acoustic.sh"; then
+    pass "check 4: coupler octave-up voice audible in the ON render"
+else
+    fail "check 4: coupler octave-up voice NOT audible (see check output above)"
 fi
 
 # ---------------------------------------------------------------- summary

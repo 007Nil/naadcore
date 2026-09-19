@@ -11,7 +11,8 @@ tests/
 ├── midi/                  # 7 base test tracks (T1–T7, format 0,
 │                          #   120 BPM, ch 0) + T8–T13 Phase 3/4/5 probes
 │                          #   (T10/T11 via gen_probes_phase4.py,
-│                          #   T12/T13 via gen_probes_phase5.py) — in git
+│                          #   T12/T13 via gen_probes_phase5.py) + T16
+│                          #   coupler acoustic probe — in git
 ├── scripts/
 │   ├── gen_midi.py        # regenerates tests/midi/ (pure stdlib, no mido)
 │   ├── render_sf2.sh      # offline FluidSynth render of a track
@@ -28,13 +29,22 @@ tests/
 │   │                      #   T11 (multi-channel CC 123 + cross-ch off)
 │   ├── gen_probes_phase5.py # Phase 5 probes: T12 (drone feature),
 │   │                      #   T13 (drone + CC 123)
+│   ├── gen_probe_coupler_acoustic.py # coupler probe: T16 (single note 60)
+│   ├── check_coupler_acoustic.sh # render A/B acoustic coupler gate: renders
+│   │                      #   T16 with coupler=off vs coupler=on through the
+│   │                      #   real plugin, asserts the octave-up voice is
+│   │                      #   AUDIBLE in the on-render (see below)
+│   ├── coupler_acoustic_assert.py # the spectral assertions behind the above
+│   │                      #   (presence + octave-band placement + octave-line
+│   │                      #   growth; prints the measurements)
 │   ├── sf2_audit.py       # SF2 binary structure dump (Phase 1 audit)
 │   └── run_config_tests.sh# compiles+runs test_plugin_config.cpp (ad hoc,
 │                          #   not wired into the project CMake build)
 ├── e2e_cli_coupler.sh    # E2E: CLI runtime coupler (stdin commands → plugin;
 │                          #   wipes ./build and rebuilds first, asserts the
 │                          #   exact coupler output sequence, EOF-alive
-│                          #   behavior, and banner-vs-HEAD build id)
+│                          #   behavior, banner-vs-HEAD build id, and —
+│                          #   Check 4 — the acoustic coupler proof)
 ├── analyze.py             # numpy WAV analysis (onset/release/AM/peak/RMS)
 ├── test_plugin_config.cpp # config-seam tests (gain/reverb/chorus +
 │                          #   attack_ms/release_ms + stop + coupler/
@@ -370,8 +380,20 @@ from its own location):
    kill (no busy-spin, no exit).
 4. Sanity: the `naadcore-cli build <id>` startup banner's commit id must
    equal `git rev-parse --short HEAD`.
+5. **Acoustic coupler proof**: runs
+   `tests/scripts/check_coupler_acoustic.sh` — renders
+   `tests/midi/T16_coupler_acoustic.mid` (single note 60) twice through the
+   real plugin (coupler=off vs coupler=on pre-init, i.e. the state the
+   CLI's `coupler on` gives to new presses) and asserts spectrally that
+   the ON render contains the octave-up voice: (a) sustain power grows
+   +0.15…+1.5 dB, (b) ≥80% of the per-bin clipped added spectral power
+   lies above 1.4·f0 (the broken 2026-09-19 subsonic-tuning build put
+   ~100% of it below 260 Hz — this assertion is what catches that bug
+   class), (c) ≥3 FFT bins in the coupler's 2nd-partial zone (≈4·f0) grow
+   ≥6 dB over the OFF render. "Coupler works" means the octave is audible
+   in the render, not that the status says on. ~20 s extra runtime.
 
-Passes all checks as of 2026-09-19 (build id 4ce9f50).
+Passes all checks as of 2026-09-19 (build id b69fa6f + coupler fix).
 
 ## Reference-clip workflow
 
@@ -434,8 +456,9 @@ sox ../../tests/references/ref_refA.wav -n spectrogram -o ../renders/ab/ref_refA
 | T11_all_notes_off | (Phase 4) multi-channel CC 123 + cross-channel NoteOff → nothing stranded |
 | T12_drone_feature | (Phase 5) melody over a continuous drone + drone-only tail (drone=48,55 vs off comparison) |
 | T13_drone_cc123 | (Phase 5) drone + melody + CC 123 → everything to the floor, synth still alive |
+| T16_coupler_acoustic | coupler acoustic gate probe (single note 60, 3 s): rendered OFF/ON by check_coupler_acoustic.sh; the ON render must contain the audible octave-up voice |
 
 T8–T13 are hand-generated probe tracks (small inline Python writers, same
 VLQ/format-0 technique as gen_midi.py; T10/T11 via
-`scripts/gen_probes_phase4.py`, T12/T13 via `scripts/gen_probes_phase5.py`)
-— they are committed.
+`scripts/gen_probes_phase4.py`, T12/T13 via `scripts/gen_probes_phase5.py`;
+T16 via `scripts/gen_probe_coupler_acoustic.py`) — they are committed.

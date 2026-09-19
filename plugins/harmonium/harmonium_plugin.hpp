@@ -108,10 +108,6 @@ private:
 
     bool coupler_on_ = false;
     bool sub_octave_on_ = false;
-    
-    // Coupler commands (runtime toggle)
-    bool set_coupler_state(bool on);
-    bool get_coupler_state() const;
 
     // Drone (Phase 5). A drone is a FIXTURE: sustained notes that sound
     // continuously under the melody, like a real harmonium's drone knobs —
@@ -233,8 +229,10 @@ private:
     void set_note_layer(HeldNote& held, uint8_t layer_bit, bool on);
 
     /// Start/release a layer's voice for EVERY currently held note
-    /// (mid-phrase coupler/sub_octave config toggle). Each note sounds at
-    /// its stored sounding_velocity; the bellows reference is untouched.
+    /// (mid-phrase sub_octave config toggle — the COUPLER key deliberately
+    /// does NOT use this: its new state applies to new presses only, per
+    /// the user spec; see set_config). Each note sounds at its stored
+    /// played_velocity; the bellows reference is untouched.
     void set_layer_for_all_held(uint8_t layer_bit, bool on);
 
     /// Apply attack_ms_/release_ms_ as volume-envelope generators on all

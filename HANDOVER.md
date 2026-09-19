@@ -2,9 +2,14 @@
 
 Last updated: 2026-09-19 (harmonium realism Phases 0–6 COMPLETE +
 **Phase A: audio OUTPUT DEVICE selection** + **Phase B: launcher audio-device
-menu** + **Piano plugin** + **CLI runtime coupler hardening** — EOF/partial-
-line stdin handling, build-id banner, e2e coupler harness, launcher rebuild
-default flipped to Y; see "CLI runtime coupler" below. Piano font:
+menu** + **Piano plugin** + **CLI runtime coupler hardening** + **Coupler
+subsonic-tuning fix + acoustic verification** — the octave coupler had never
+been audible: `fluid_synth_activate_key_tuning` was fed a constant +3
+"detune" where the API expects ABSOLUTE per-key cents (100·key), tuning
+every coupler voice to ~8 Hz; fixed to 100·key+3, semantics aligned to the
+user spec (toggle applies to NEW presses only, no retroactive mid-hold
+layer changes), and a render-based acoustic check now gates the coupler —
+see "Layer router" + tests/RESULTS.md "Coupler acoustic check". Piano font:
 GeneralUser GS 1.44 (~30 MB, royalty-free) after the Salamander Lite SF2 was
 diagnosed as defective (broadband click baked into every note onset)
 
@@ -106,20 +111,26 @@ naadcore/
 ├── tests/                          # Realism test harness (re-added with content)
 │   ├── e2e_cli_coupler.sh          # E2E: CLI runtime coupler via stdin (wipes
 │   │                               #   ./build, rebuilds, asserts coupler
-│   │                               #   sequence + EOF behavior + build id)
+│   │                               #   sequence + EOF behavior + build id +
+│   │                               #   acoustic octave proof, Check 4)
 │   ├── README.md                   # Harness guide, tool status, capture paths
 │   ├── RESULTS.md                  # A/B score sheet + objective measurements
 │   ├── analyze.py                  # WAV analysis (onset/release/AM/peak/RMS)
 │   ├── test_plugin_config.cpp      # Config-seam unit tests (213 checks)
-│   ├── midi/                       # 7 base test tracks (T1–T7) + T8–T13
-│   │                               #   Phase 3/4/5 probe tracks
+│   ├── midi/                       # 7 base test tracks (T1–T7) + T8–T16
+│   │                               #   Phase 3/4/5 probes + coupler acoustic
+│   │                               #   probe (T16, gen_probe_coupler_acoustic.py)
 │   ├── scripts/                    # gen_midi.py, render_sf2.sh, capture_live.sh,
 │   │                               #   render_plugin.cpp, run_render_plugin.sh,
 │   │                               #   derive_sf2.py (Phase 3/6 SF2 surgery:
 │   │                               #   --click builds harmonium_v3.sf2),
 │   │                               #   am_spectrum.py (AM-band spectrum),
 │   │                               #   gen_probes_phase4.py (T10/T11),
-│   │                               #   gen_probes_phase5.py (T12/T13), ...
+│   │                               #   gen_probes_phase5.py (T12/T13),
+│   │                               #   gen_probe_coupler_acoustic.py (T16),
+│   │                               #   check_coupler_acoustic.sh +
+│   │                               #   coupler_acoustic_assert.py (render A/B
+│   │                               #   acoustic coupler gate), ...
 │   ├── timings/                    # Note timing files used by analyze.py
 │   ├── renders/                    # Rendered/captured WAVs (gitignored)
 │   └── references/                 # Reference clips (gitignored, personal use)
@@ -692,7 +703,7 @@ document any multi-channel controller use).
 | Layer | Internal channel | Pitch | Gain (measured vs main voice) | Config key |
 |---|---|---|---|---|
 | main | incoming channel (0–12 safe) | note | 0 dB | — |
-| octave coupler | **15** | note+12 | **−6.4…−7.8 dB** (CC7=60) | `coupler` (default off) |
+| octave coupler | **15** | note+12 | **≈ −9 dB** (CC7=60; measured −9.1 dB at note 60 after the 2026-09-19 tuning fix — see tests/RESULTS.md "Coupler acoustic check") | `coupler` (default off) |
 | sub-octave | **14** | note−12 | **−11.4…−13.9 dB** (CC7=40; −22 dB measured at note 79 — its sub sample sits lower) | `sub_octave` (default off) |
 | drone (Phase 5) | **13** | fixed spec | **−11…−14 dB** under the melody (CC7=45) | `drone` / `drone_level` |
 
@@ -708,24 +719,34 @@ document any multi-channel controller use).
   a cross-channel NoteOff cannot strand a voice); `sounding_velocity` = the
   velocity actually played (needed for mid-phrase layer toggles); `layers` =
   bits of the layer voices currently sounding for this note.
-- **Mid-phrase toggles** (`coupler=on|off`, `sub_octave=on|off` while notes
-  are held): toggling ON starts the layer for every currently held note at
-  its stored `sounding_velocity`; toggling OFF releases that layer's voices
-  immediately (mirrors the predecessor's refreshAudio semantics). The
-  bellows reference is untouched.
+- **Coupler toggle semantics (user spec, 2026-09-19):** `coupler=on|off`
+  applies to **NEW presses only** — a mid-hold toggle does NOT retro-add or
+  retro-remove the octave voice on already-held notes. Notes pressed while
+  the coupler was on keep their octave voice until their own NoteOff
+  (`release_held_note` releases every voice started at press time via the
+  `HeldNote.layers` bits). The bellows reference is untouched. The
+  predecessor behavior (Phase 4: toggling started/released the layer for
+  every held note) was removed for the coupler only; **`sub_octave`
+  deliberately keeps the retro semantics** (out of scope).
 - **Internal channel setup:** at `init()` (post-sfload) and after every
   `stop` change, channels 14/15 get the current preset (apply_stop loops
   ALL channels) and their layer-gain CC 7 (`apply_layer_gains()`). The
   Phase 2 envelope generators already cover all channels; verified by
   render that `program_select` does NOT reset them (with release_ms=2000
   the coupler tail tracks the main's full 2 s shaped release).
-- **Coupler detune (optional, implemented):** channel 15 carries a +3¢
-  tuning (`fluid_synth_activate_key_tuning` + `fluid_synth_activate_tuning`,
-  MIDI Tuning Standard API, applied once at init — tunings survive program
-  changes). Renders show the coupler's fundamental line at f0×2^(+3¢) (e.g.
-  555.0 Hz next to the main's 554.0 for note 60) — a subtle beat between
-  main and octave layer. The double-stop zones already provide shimmer;
-  this is a bonus.
+- **Coupler detune (implemented, FIXED 2026-09-19):** channel 15 carries a
+  +3¢ tuning (`fluid_synth_activate_key_tuning` +
+  `fluid_synth_activate_tuning`, MIDI Tuning Standard API, applied once at
+  init — tunings survive program changes). **The key-tuning API takes the
+  ABSOLUTE pitch of each key in cents (equal temperament default = 100·key),
+  NOT a per-key detune offset.** The original code passed a constant
+  `kCouplerDetuneCents` for all 128 keys, "tuning" every coupler voice to
+  ~3 cents ≈ 8 Hz: the voice played, consumed polyphony and added ~−7 dB of
+  SUBSONIC rumble power, but no octave was audible — the exact "coupler on
+  but only the main note sounds" bug (root cause + render A/B proof in
+  tests/RESULTS.md "Coupler acoustic check"). Fixed to `100·key + 3¢`; the
+  coupler's fundamental now renders at f0×2×2^(+3¢) (≈555.0 Hz next to the
+  main's 554.0 for note 60) at ≈ −9 dB under the main voice.
 - **Mirroring policy:** incoming PITCH_BEND and CC 11 (expression) are
   mirrored to ACTIVE layer channels so layers track the main voice. **CC 7
   is deliberately NOT mirrored** — on channels 14/15 it IS their fixed gain
@@ -737,14 +758,24 @@ document any multi-channel controller use).
   `fluid_synth_all_notes_off` on all 16 channels plus the state reset;
   cross-channel NoteOff releases on the stored channel.
 - **Verification** (plugin-in-loop renders, objective numbers in
-  tests/RESULTS.md Phase 4): octave-up/down lines at exactly ±1 octave; T3
-  per-member release removes both the main and coupler voice (no residual);
-  T5 drone couplers present with melody bit-identical; T10 duplicate NoteOn
-  produces no transient and one release tail; T11 multi-channel CC 123 +
-  cross-channel NoteOff strand nothing. Live mid-phrase toggling is
-  verified at state level (config tests interleave set_config between
-  handle_midi_event calls) plus pre-run-config renders — the renderer has
-  no mid-run config mechanism (deliberately: no MIDI semantics invented).
+  tests/RESULTS.md Phase 4 and "Coupler acoustic check"): octave-up/down
+  lines at exactly ±1 octave; T3 per-member release removes both the main
+  and coupler voice (no residual); T5 drone couplers present with melody
+  bit-identical; T10 duplicate NoteOn produces no transient and one
+  release tail; T11 multi-channel CC 123 + cross-channel NoteOff strand
+  nothing. **Correction (2026-09-19):** the Phase 4 coupler measurements
+  (−6.4…−7.8 dB "layer level", the "555.0 Hz coupler line") were taken
+  while the subsonic-tuning bug was live — they measured the rumble's
+  power and the main voice's own beating sidebands, not an octave voice
+  (the sub-octave ch14 numbers were real: that channel has no tuning).
+  The coupler is now verified by a dedicated acoustic check:
+  `tests/scripts/check_coupler_acoustic.sh` (render A/B + spectral
+  assertions — presence, octave-band placement, octave-line growth),
+  wired into `tests/e2e_cli_coupler.sh` as Check 4. Live mid-phrase
+  toggling is verified at state level (config tests interleave set_config
+  between handle_midi_event calls) plus pre-run-config renders — the
+  renderer has no mid-run config mechanism (deliberately: no MIDI
+  semantics invented).
 - Startup log line: `Synth layers: coupler=off sub_octave=off (ch15=note+12
   CC7=60, ch14=note-12 CC7=40)`, followed since Phase 5 by
   `Synth drone: off (ch13 CC7=45 vel=100)`.
@@ -759,13 +790,14 @@ driver, no keyboard needed):
 | Command | Effect |
 |---|---|
 | `status` | prints `Coupler: on/off` (current plugin state) |
-| `coupler on` | sets `coupler=on` live → prints `Coupler ON` (starts ch15 layer voices on held notes) |
-| `coupler off` | sets `coupler=off` live → prints `Coupler OFF` (releases ch15 layer voices) |
+| `coupler on` | sets `coupler=on` live → prints `Coupler ON` (new presses start the ch15 octave voice; already-held notes are NOT retro-coupled — user spec) |
+| `coupler off` | sets `coupler=off` live → prints `Coupler OFF` (new presses have no octave; held notes keep theirs until their NoteOff) |
 
-Default state is the plugin's **off**. The runtime toggle works because
-the Phase 4 layer router implements live mid-phrase toggles: `set_config
-("coupler", "on|off")` starts/releases the octave layer for every currently
-held note at its stored `sounding_velocity` — no re-init, bellows untouched.
+Default state is the plugin's **off**. The toggle is audibly verified:
+`tests/e2e_cli_coupler.sh` Check 4 renders the probe OFF/ON through the
+real plugin and asserts the octave-up voice is present in the audio
+("coupler works" = "octave audible in the render", not "status says on" —
+see tests/scripts/check_coupler_acoustic.sh).
 
 CLI stdin hardening shipped with it:
 - **EOF handling** — on stdin EOF the CLI prints `stdin closed (EOF) - CLI
@@ -785,7 +817,8 @@ CLI stdin hardening shipped with it:
   already correct.
 
 E2E harness (wipes ./build, rebuilds, and asserts the exact coupler
-sequence, EOF behavior, and banner-vs-HEAD identity):
+sequence, EOF behavior, banner-vs-HEAD identity, and — Check 4 — the
+acoustic octave proof via tests/scripts/check_coupler_acoustic.sh):
 
 ```bash
 bash tests/e2e_cli_coupler.sh

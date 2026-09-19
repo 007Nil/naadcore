@@ -303,6 +303,16 @@ Renders: `tests/renders/p3_*.wav` (gitignored).
 
 ## Phase 4: layer router + behavior fixes (2026-09-19)
 
+> **Correction (2026-09-19, later same day):** the COUPLER measurements in
+> this section (layer-gain table column, "octave placement" lines, T3/T5
+> coupler lines) were taken while the coupler's +3¢ tuning was broken —
+> every coupler voice was tuned to ~8 Hz (subsonic rumble), so the "coupler
+> excess" below is the rumble's power and the "coupler lines" are the main
+> voice's own beating sidebands. The SUB-OCTAVE column and the T10/T11
+> behavior proofs are unaffected (channel 14 carries no tuning). See
+> "Coupler acoustic check — subsonic-tuning bug fix" above for the
+> line-verified post-fix coupler (≈ −9 dB at CC7=60).
+
 Octave coupler (ch 15, note+12, CC7=60, +3¢ detuned) and sub-octave (ch 14,
 note−12, CC7=40) as live config keys `coupler` / `sub_octave`; duplicate
 NoteOn ignored; CC 123 on all 16 channels; cross-channel NoteOff. All
@@ -652,6 +662,86 @@ identical PRNG position) is the reproducibility contract.
 Renders: `tests/renders/p6_*.wav` (gitignored). Calibration MIDIs/WAVs in
 /tmp/opencode/p6 (click_selfend, reedonly/both_low/both_high, cc7_sweep).
 
+## Coupler acoustic check — subsonic-tuning bug fix (2026-09-19)
+
+**The bug.** With the coupler ON, only the main note was audible — the
+octave-up voice (note+12, ch 15) never sounded, in the user's live playing
+AND in plugin-in-loop renders, despite `status` reporting "on". Root cause
+(`plugins/harmonium/harmonium_plugin.cpp`, `apply_coupler_detune`):
+`fluid_synth_activate_key_tuning` was fed a 128-entry array of constant
+`kCouplerDetuneCents` (+3.0) — but that API expects each key's **ABSOLUTE
+pitch in cents** (equal-temperament default = 100·key). Every key was thus
+"tuned" to 3 cents ≈ 8 Hz: every coupler voice played as an inaudible
+subsonic rumble (a ~17 Hz pulse-train artifact of the extreme down-pitch
+resampling), consuming polyphony and adding power, but producing no octave.
+
+**Render A/B proof (T14 probe: notes 48/60/72 held 3 s each, plugin-in-loop,
+broken build).** Mid-sustain windows, coupler=off vs coupler=on (pre-init):
+
+- Everything above 260 Hz **bit-identical between renders to ±0.1 dB** —
+  no octave line was added anywhere.
+- All the ON render's extra power (+0.66 dB total) sat **below 260 Hz**
+  (bands: 0–40 Hz +36.7 dB over digital silence, 40–150 Hz +50.6 dB,
+  150–260 Hz +41.4 dB) — a 34.4/51.7/68.9/86.1/103.3/137.8 Hz line family
+  (~17.2 Hz pulse-train harmonics), i.e. the mistuned voice's rumble.
+
+**Raw-FluidSynth bisect** (scratch harness replicating the plugin's exact
+init on ch 15, note 72): (A) plugin's sequence incl. the broken tuning →
+the garbage pulse train, nothing at 555 Hz; (B) same minus the tuning calls
+→ clean 555.0 Hz voice at the correct CC7=60 level (−8.8 dB vs ch 0
+control); (G) pitch array fixed to `100·key + 3` → clean voice at
+**556.1 Hz = 555.0 × 2^(3/1200)** — the +3¢ detune audibly applied. All
+`apply` flag combinations (0/1) of both tuning calls produced the same
+broken result — the pitch array itself was the sole culprit.
+
+**The fix + measured result.** `pitch[key] = 100.0 * key +
+kCouplerDetuneCents`. Post-fix renders (same T14 A/B):
+
+| Metric (note 60 window) | broken | fixed |
+|---|---|---|
+| sustain power ON vs OFF | +0.57 dB | +0.50 dB |
+| added power below 1.4·f0 (per-bin clipped) | 99.4% | **0.01%** |
+| coupler 2nd-partial zone (≈4·f0, 1093–1135 Hz) bins growing ≥6 dB | 0 (max +1.2 dB) | **20–21 (max +47 dB)** |
+| layer level vs main (power subtraction) | n/a (garbage) | **≈ −9.1 dB** |
+
+The fixed coupler's line clusters appear at 1110–1113 Hz and 1665–1669 Hz
+(2nd/3rd partials, +3¢ above the main's even partials); its 555 Hz
+fundamental hides inside the main's 2nd-partial beating cluster
+(coherent ±interference — which is why the permanent check asserts the
+2nd-partial zone, not the fundamental).
+
+**Keyboard sweep (T15, notes 24–108 step 6, fixed build).** The octave
+voice is present across the whole range: added power is 97.5–100% above
+1.4·f0 for every swept note (power growth +0.36…+0.57 dB). No font-zone
+holes: note+12 ≤ 120 stays inside the font's stretched top zone; the
+range clamp only bites above note 115.
+
+**Correction to the Phase 4 record.** The Phase 4 coupler numbers below
+("−6.4…−7.8 dB layer level", "coupler fundamental at 555.0 Hz", the T3/T5
+"coupler lines") were measured while this bug was live: the power
+subtraction captured the rumble's power, and the "coupler lines" were the
+main voice's own beating sidebands (they are present in coupler-off renders
+too). The **sub-octave (ch 14) Phase 4 numbers remain valid** — that
+channel never had a tuning. The corrected coupler level is ≈ −9 dB below
+the main voice at CC7=60.
+
+**Permanent gate.** `tests/scripts/check_coupler_acoustic.sh` +
+`coupler_acoustic_assert.py` (probe `tests/midi/T16_coupler_acoustic.mid`,
+committed; regenerable via `gen_probe_coupler_acoustic.py`) render the
+OFF/ON pair through the real plugin and assert: presence (+0.15…+1.5 dB),
+octave-band placement (≥80% of added power above 1.4·f0), and ≥3 bins
+growing ≥6 dB in the ≈4·f0 zone. Verified to PASS on the fixed build
+(presence +0.50 dB, 99.99% high, 20 bins ≥6 dB, max +47 dB) and **FAIL on
+the broken build** (99.4% low, 0 bins) — a reintroduced silent/wrong-pitch
+coupler can no longer pass "status says on" unnoticed. Wired into
+`tests/e2e_cli_coupler.sh` as Check 4.
+
+**Semantics alignment (user spec).** `set_config("coupler", …)` no longer
+retro-applies to held notes: a mid-hold toggle affects NEW presses only;
+held notes keep every voice started at their press until their NoteOff
+(`HeldNote.layers` bookkeeping). `sub_octave` keeps the Phase 4 retro
+semantics (out of scope). Config tests updated; 287/287 green.
+
 ## Listening notes
 
 (reference clips pending — see tests/README.md for the workflow)
@@ -683,6 +773,11 @@ Renders: `tests/renders/p6_*.wav` (gitignored). Calibration MIDIs/WAVs in
   beat confirmed working. FluidSynth's `program_select` does not reset
   channel generators (release_ms=2000 tail-tracking proof) nor CC 7 (layer
   gains persist across stop changes).
+  **CORRECTION (2026-09-19, same day):** the coupler figures in this bullet
+  were measured while the subsonic-tuning bug was live — they captured the
+  mistuned voice's rumble power and the main voice's own beating sidebands,
+  not an octave voice (the sub-octave figures stand). See "Coupler acoustic
+  check" above for the corrected, line-verified coupler at ≈ −9 dB.
 - Phase 5 (2026-09-19): the drone (ch13 fixture, CC7=45, fixed vel 100)
   measures ≈11–14 dB under the melody fundamental line with melody lines
   bit-identical on/off (no bellows/gain interaction); the double stop

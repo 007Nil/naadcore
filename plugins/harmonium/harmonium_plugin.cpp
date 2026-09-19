@@ -291,30 +291,22 @@ void HarmoniumPlugin::apply_coupler_detune() {
     // Tunings live outside the SoundFont/preset namespace and survive
     // program_select, so this is applied once at init. Failure is silent —
     // the double-stop zones already provide shimmer (this is a bonus).
-    std::vector<double> pitch(128, kCouplerDetuneCents);
+    //
+    // fluid_synth_activate_key_tuning takes the ABSOLUTE pitch of each key
+    // in cents; the equal-temperament default for key k is 100*k (NOT a
+    // per-key offset). Bug fixed 2026-09-19: this array was built as a
+    // constant kCouplerDetuneCents, "tuning" every key to ~3 cents ≈ 8 Hz —
+    // every coupler voice became an inaudible subsonic rumble instead of
+    // the octave-up note (render A/B proof: tests/RESULTS.md, "Coupler
+    // acoustic check"). The +3 cents is the offset from the default pitch.
+    std::vector<double> pitch(128);
+    for (int key = 0; key < 128; ++key) {
+        pitch[key] = 100.0 * key + kCouplerDetuneCents;
+    }
     if (fluid_synth_activate_key_tuning(synth_, 0, 0, "coupler+3c",
                                         pitch.data(), 0) == 0) {
         fluid_synth_activate_tuning(synth_, kCouplerChannel, 0, 0, 0);
     }
-}
-
-bool HarmoniumPlugin::set_coupler_state(bool on) {
-    if (coupler_on_ == on) {
-        return true; // Already in the desired state
-    }
-    
-    coupler_on_ = on;
-    
-    // If turning off, release all existing coupler voices
-    if (!on) {
-        set_layer_for_all_held(kLayerCoupler, false);
-    }
-    
-    return true;
-}
-
-bool HarmoniumPlugin::get_coupler_state() const {
-    return coupler_on_;
 }
 
 bool HarmoniumPlugin::parse_drone_spec(const std::string& value,
@@ -918,10 +910,19 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
     }
 
     // Layer router (Phase 4): octave coupler + sub-octave toggles. Like
-    // the other on/off keys, values are strictly validated. Toggling while
-    // notes are held starts/releases that layer for every held note at
-    // its stored sounding_velocity (mid-phrase coupler change, like the
-    // predecessor's refreshAudio); the bellows reference is untouched.
+    // the other on/off keys, values are strictly validated.
+    //
+    // COUPLER semantics (user spec, 2026-09-19): the new state applies to
+    // NEW presses only — a mid-hold toggle must NOT retro-add or
+    // retro-remove the octave voice on already-held notes (no
+    // set_layer_for_all_held). Notes pressed while the coupler was on
+    // keep their octave voice until their own NoteOff, which releases
+    // every voice started at press time via the HeldNote.layers bits
+    // (release_held_note). The bellows reference is untouched either way.
+    //
+    // sub_octave deliberately KEEPS the Phase 4 mid-phrase retro semantics
+    // (toggling starts/releases that layer for every held note at its
+    // stored played_velocity) — changing it is out of scope here.
     if (k == "coupler" || k == "sub_octave") {
         const std::string v = value;
         bool on = false;
@@ -936,10 +937,8 @@ PluginResult HarmoniumPlugin::set_config(const char* key, const char* value) {
         bool& flag = is_coupler ? coupler_on_ : sub_octave_on_;
         const bool changed = (flag != on);
         flag = on;
-        if (synth_ && changed) {
-            set_layer_for_all_held(is_coupler ? kLayerCoupler
-                                               : kLayerSubOctave,
-                                    on);
+        if (synth_ && changed && !is_coupler) {
+            set_layer_for_all_held(kLayerSubOctave, on);
         }
         return PLUGIN_OK;
     }
