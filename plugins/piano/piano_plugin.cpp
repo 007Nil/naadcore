@@ -2,6 +2,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -13,10 +14,24 @@
 // root for this fallback to resolve. CMake builds pass the absolute path
 // instead, so this literal is compiled out there.
 #ifndef PIANO_SOUNDFONT_PATH
-#define PIANO_SOUNDFONT_PATH "plugins/piano/soundfonts/SalamanderGrandLite.sf2"
+#define PIANO_SOUNDFONT_PATH "plugins/piano/soundfonts/GeneralUserGS.sf2"
 #endif
 
 namespace naadcore {
+
+namespace {
+
+// Volume-envelope base baked into the piano font (tests/scripts/sf2_audit.py):
+// every instrument's attackVolEnv is the SF2 default (~1 ms, -12000 tc), so
+// the hammer transient baked into each sample's start sounds at full level.
+constexpr double kSf2AttackTc = -12000.0;   ///< ~1 ms (SF2 default)
+
+// SF2 envelope time generators are in timecents: tc = 1200 * log2(seconds).
+double ms_to_timecents(double ms) {
+    return 1200.0 * std::log2(ms / 1000.0);
+}
+
+} // namespace
 
 PianoPlugin::PianoPlugin()
     : settings_(nullptr), synth_(nullptr), driver_(nullptr),
@@ -41,7 +56,7 @@ const PluginInfo* PianoPlugin::get_info() {
         "piano",
         "1.0.0",
         "NaadCore Team",
-        "FluidSynth-based grand piano instrument using the Salamander Grand Piano SoundFont"
+        "FluidSynth-based grand piano instrument using the GeneralUser GS SoundFont"
     };
     return &info;
 }
@@ -102,17 +117,13 @@ PluginResult PianoPlugin::init(const char* audio_driver) {
     std::cout << "Synth voicing: gain=0.5 reverb=on chorus=off interp=4th-order"
               << std::endl;
 
-    // Soften the hammer transient (key-click/chiff) baked into the sample
-    // by increasing the volume-envelope attack time. The SF2 default is
-    // ~1 ms (GEN_VOLENVATTACK = -12000 timecents), which lets the hammer
-    // hit come through fully. A 10 ms ramp hides most of the transient
-    // while keeping the piano responsive.
-    //
-    // 10 ms in timecents = 1200 * log2(10/1000) = -7972.6 tc
-    // Zone attack = -12000 (SF2 default), so offset = -7972.6 - (-12000) = +4027
-    for (int ch = 0; ch < midi_channels; ++ch) {
-        fluid_synth_set_gen(synth_, ch, GEN_VOLENVATTACK, 4027.0f);
-    }
+    // Soften the volume-envelope attack if requested (attack_ms config key,
+    // default 1 ms = SF2 default = no change). The old key-click issue was
+    // caused by a defective SalamanderGrandLite.sf2 (broadband click baked
+    // into the sample onsets) and was fixed by replacing the font — not by
+    // envelope shaping. See soundfonts/README.md.
+    apply_envelope_gens();
+    std::cout << "Synth envelope: attack_ms=" << attack_ms_ << std::endl;
 
     // Load SoundFont (embedded path)
     soundfont_id_ = load_soundfont();
@@ -143,6 +154,24 @@ int PianoPlugin::load_soundfont() {
         std::cout << "Loaded SoundFont: " << soundfont_path_ << " (ID: " << id << ")" << std::endl;
     }
     return id;
+}
+
+void PianoPlugin::apply_envelope_gens() {
+    if (!synth_) {
+        return;
+    }
+    // FluidSynth 2.4 applies fluid_synth_set_gen() values as channel-gen
+    // OFFSETS added on top of the instrument zone's generator values (the
+    // harmonium plugin calibrated this empirically — see HANDOVER.md
+    // "Volume-envelope shaping"; the piano font's zones use the SF2 default
+    // -12000 tc attack, so the offset moves it to the requested absolute
+    // time). Channel-gen offsets are not clamped to the SF2 spec range.
+    const float attack_tc =
+        static_cast<float>(ms_to_timecents(attack_ms_) - kSf2AttackTc);
+    int midi_channels = fluid_synth_count_midi_channels(synth_);
+    for (int ch = 0; ch < midi_channels; ++ch) {
+        fluid_synth_set_gen(synth_, ch, GEN_VOLENVATTACK, attack_tc);
+    }
 }
 
 PluginResult PianoPlugin::start_audio() {
@@ -262,6 +291,9 @@ std::string PianoPlugin::get_config(const char* key) {
     if (k == "audio_device") {
         return audio_device_;
     }
+    if (k == "attack_ms") {
+        return std::to_string(attack_ms_);
+    }
 
     return "";
 }
@@ -283,6 +315,19 @@ PluginResult PianoPlugin::set_config(const char* key, const char* value) {
     }
     if (k == "audio_device") {
         audio_device_ = value;
+        return PLUGIN_OK;
+    }
+    if (k == "attack_ms") {
+        std::string v = value;
+        char* end = nullptr;
+        long ms = std::strtol(v.c_str(), &end, 10);
+        if (end == v.c_str() || *end != '\0' || !(ms >= 1 && ms <= 2000)) {
+            return PLUGIN_INVALID_PARAM;
+        }
+        attack_ms_ = static_cast<int>(ms);
+        if (synth_) {
+            apply_envelope_gens();
+        }
         return PLUGIN_OK;
     }
 

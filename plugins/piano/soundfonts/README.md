@@ -1,39 +1,35 @@
-# Salamander Grand Piano Lite SoundFont
+# Piano SoundFont
 
-## Source
+## Current font: GeneralUser GS 1.44 (`GeneralUserGS.sf2`, ~30 MB)
 
-**SalamanderGrandLite.sf2** — a SoundFont 2 conversion of the *Salamander Grand
-Piano V3 Lite* (Yamaha C5, "Slender Edition" 2017).
+- **Author**: Samuel Christian Collins
+- **License**: Royalty-free — free for personal and commercial use
+  (see the license text at <http://www.schristiancollins.com/generaluser.php>)
+- **Format**: SoundFont 2 (RIFF), General MIDI bank — preset 0 is an acoustic
+  grand piano; 128 GM instruments accessible via MIDI program change
+- **Committed directly to git** (under GitHub's 100 MB limit; no LFS needed)
 
-- **Original format**: SFZ (see https://github.com/sfzinstruments/SalamanderGrandPiano)
-- **Converted to SF2** using Polyphone
-- **Author**: Alexander Holm <axeldenstore@gmail.com>
-- **Phase alignment**: Signal Experiments (sig-ex.com)
+## Why the previous font (SalamanderGrandLite.sf2) was replaced
 
-## License
+The Salamander Grand Piano Lite SF2 (a third-party Polyphone conversion of the
+Salamander Grand Piano V3 SFZ, CC BY 3.0, from
+VimHater/SalamanderGrandLite_sf2) had a **broadband click impulse baked into
+the onset of every note sample** — diagnosed by offline rendering
+(`fluidsynth -F out.wav font.sf2 test.mid`) and sox analysis:
 
-Creative Commons Attribution 3.0 Unported (CC BY 3.0) — same as the original
-Salamander Grand Piano.
+- Maximum sample-to-sample delta in the 10–20 ms window after note-on:
+  **0.0399** (Salamander) vs **0.0053** (GeneralUser) — ~45x sharper
+- Spectrogram: a bright vertical line (full-spectrum impulse) at every note
+  onset, absent in clean fonts
 
-See https://creativecommons.org/licenses/by/3.0/ for the full license text.
+Because the discontinuity sits ~10–20 ms *into* the sample (not at sample
+start), no volume-envelope attack shaping (`GEN_VOLENVATTACK`) can remove it.
+The file was defective; the font was swapped. The original Salamander SFZ
+samples remain the reference if a clean full conversion is ever produced
+(<https://github.com/sfzinstruments/SalamanderGrandPiano>, CC BY 3.0).
 
-## Download
+## Attack shaping
 
-Released at:
-https://github.com/VimHater/SalamanderGrandLite_sf2/releases/tag/0.1
-
-## Why SF2?
-
-FluidSynth 2.4.8 on Debian does not include SFZ support (no `libsfz`
-dependency). The SF2 format is FluidSynth's native SoundFont container format
-and is loaded via `fluid_synth_sfload()` — the same mechanism used by the
-harmonium plugin.
-
-## File
-
-| Property | Value |
-|---|---|
-| Format | SoundFont 2.04 (RIFF-based) |
-| Size | ~184 MB |
-| Version | Lite (Slender Edition, reduced compared to the full V3) |
-| Instrument | Grand piano (Yamaha C5) |
+The plugin exposes an `attack_ms` config key (default **1** = SF2 default =
+no change). Raise it (e.g. 10) to soften the note onset if desired; the
+mechanism mirrors the harmonium plugin's additive `GEN_VOLENVATTACK` offset.

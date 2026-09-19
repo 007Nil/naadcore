@@ -11,7 +11,7 @@
  * @file piano_plugin.hpp
  * @brief Piano plugin implementation
  *
- * This plugin loads a grand piano SoundFont (Salamander Grand Piano) via
+ * This plugin loads a grand piano SoundFont (GeneralUser GS) via
  * FluidSynth and provides standard piano note-on/note-off behavior with
  * velocity-sensitive sound. No harmonium-specific features (bellows, stops,
  * drones, key-click).
@@ -52,6 +52,21 @@ private:
     std::string audio_device_;
     std::string soundfont_path_;
     int soundfont_id_;  ///< ID of the loaded SoundFont (-1 until loaded)
+
+    // Volume-envelope shaping. The font's samples carry a hammer transient
+    // at note start (the SF2 audit measured attackVolEnv at the SF2 default
+    // ~1 ms / -12000 tc, so the hit comes through at full level); a longer
+    // attack ramp attenuates it. Applied via FluidSynth channel generators
+    // (set_gen values are additive offsets — see HANDOVER.md
+    // "Volume-envelope shaping" for the calibrated override-vs-additive
+    // finding, which applies to this font identically since it also uses
+    // the -12000 tc default).
+    int attack_ms_ = 1;
+
+    /// Apply attack_ms_ as a volume-envelope generator on all channels
+    /// (offset form; call after init once synth_ exists, or from
+    /// set_config when the synth is already live).
+    void apply_envelope_gens();
 };
 
 } // namespace naadcore

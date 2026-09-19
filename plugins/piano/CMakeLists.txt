@@ -16,11 +16,11 @@ add_library(piano_plugin SHARED
 )
 
 # SoundFont path (can be overridden via -DPIANO_SOUNDFONT_PATH=... during cmake)
-# Default: the in-repo Salamander Grand Piano Lite SF2 — portable, fully
-# self-contained (the plugin never reads a font outside this repository).
+# Default: the in-repo GeneralUser GS font — portable, fully self-contained
+# (the plugin never reads a font outside this repository).
 if(NOT PIANO_SOUNDFONT_PATH)
     set(PIANO_SOUNDFONT_PATH
-        "${CMAKE_SOURCE_DIR}/plugins/piano/soundfonts/SalamanderGrandLite.sf2")
+        "${CMAKE_SOURCE_DIR}/plugins/piano/soundfonts/GeneralUserGS.sf2")
 endif()
 
 target_compile_definitions(piano_plugin PRIVATE

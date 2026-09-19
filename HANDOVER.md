@@ -2,8 +2,10 @@
 
 Last updated: 2026-09-19 (harmonium realism Phases 0–6 COMPLETE +
 **Phase A: audio OUTPUT DEVICE selection** + **Phase B: launcher audio-device
-menu** + **Piano plugin** — new `piano` plugin using the Salamander Grand
-Piano Lite SF2 (CC BY 3.0) via the exact same plugin architecture)
+menu** + **Piano plugin** — new `piano` plugin via the exact same plugin
+architecture; piano font swapped to GeneralUser GS 1.44 (~30 MB, royalty-free)
+after the Salamander Lite SF2 was diagnosed as defective (broadband click
+baked into every note onset))
 
 ## Project purpose
 
@@ -14,7 +16,7 @@ dynamically loaded instrument plugins; the available plugins are:
 - **harmonium** (`libharmonium_plugin.so`) — FluidSynth-based harmonium with
   reed stops, bellows velocity model, drone fixture, key click, and micro-variation
 - **piano** (`libpiano_plugin.so`) — FluidSynth-based grand piano using the
-  Salamander Grand Piano Lite SoundFont (CC BY 3.0)
+  GeneralUser GS SoundFont (royalty-free)
 
 Goal: press Q49 keys → hear a velocity-sensitive, polyphonic instrument through
 ALSA audio (harmonium or piano, selected at launch).
@@ -36,7 +38,7 @@ PluginManager (core/plugin_manager.cpp, header include/naadcore/plugin_manager.h
 libharmonium_plugin.so  |  libpiano_plugin.so  (one or the other, selected by --plugin)
   - implements INaadPlugin  |  implements INaadPlugin
   - owns its own FluidSynth |  owns its own FluidSynth
-  - harmonium_v3.sf2        |  SalamanderGrandLite.sf2
+  - harmonium_v3.sf2        |  GeneralUserGS.sf2
         ↓
 FluidSynth + SoundFont → ALSA audio → speakers
 ```
@@ -94,10 +96,10 @@ naadcore/
 │   │   └── harmonium_plugin.cpp     # FluidSynth plugin + extern "C" factories
 │   └── piano/                       # Plugin target: piano_plugin
 │       ├── CMakeLists.txt          # Embeds PIANO_SOUNDFONT_PATH (default:
-│       │                           #   in-repo SalamanderGrandLite.sf2)
+│       │                           #   in-repo GeneralUserGS.sf2)
 │       ├── soundfonts/
-│       │   ├── README.md             # Source, license (CC BY 3.0), format audit
-│       │   └── SalamanderGrandLite.sf2  # ~184 MB, SF2 conversion of SFZ
+│       │   ├── README.md             # Source, license, Salamander defect diagnosis
+│       │   └── GeneralUserGS.sf2     # ~30 MB, GM bank (preset 0 = grand piano)
 │       ├── piano_plugin.hpp
 │       └── piano_plugin.cpp         # FluidSynth plugin + extern "C" factories
 ├── tests/                          # Realism test harness (re-added with content)
@@ -414,17 +416,20 @@ FluidSynth-based grand piano instrument — **standard piano behavior**:
 velocity-sensitive note-on, standard note-off, no harmonium-specific features
 (no bellows model, no reed stops, no drones, no key-click, no micro-variation).
 
-**SoundFont**: `plugins/piano/soundfonts/SalamanderGrandLite.sf2` (~184 MB),
-SF2 conversion of the *Salamander Grand Piano V3 Lite* (Yamaha C5, Slender
-Edition 2017). License: **CC BY 3.0** (same as the original). See
-`plugins/piano/soundfonts/README.md` for provenance details.
-
-FluidSynth 2.4.8 on this Debian system does **not** support SFZ; the original
-Salamander Grand Piano is distributed only in SFZ format. The SF2 conversion
-(from GitHub release at
-<https://github.com/VimHater/SalamanderGrandLite_sf2/releases/tag/0.1>) is
-loaded via `fluid_synth_sfload()` — the **same mechanism** as the harmonium
+**SoundFont**: `plugins/piano/soundfonts/GeneralUserGS.sf2` (~30 MB),
+GeneralUser GS 1.44 by S. Christian Collins, royalty-free license, GM bank
+(preset 0 = acoustic grand; 128 instruments reachable via program change).
+Loaded via `fluid_synth_sfload()` — the **same mechanism** as the harmonium
 plugin.
+
+**Font history**: the original font was a Salamander Grand Piano Lite SF2
+conversion (CC BY 3.0, from VimHater/SalamanderGrandLite_sf2). It was
+**defective** — offline render + sox analysis showed a broadband click
+impulse baked into the onset of every note sample (max sample-to-sample
+delta ≈ 2x the note's own peak amplitude at 10–20 ms after note-on; clean
+fonts ratio ≈ 0.16 vs defect ≈ 1.8). Because the discontinuity sits inside
+the sample, no `GEN_VOLENVATTACK` shaping can remove it. The font was
+swapped; see `plugins/piano/soundfonts/README.md` for the full diagnosis.
 
 **Plugin behavior**:
 - `handle_midi_event()`: standard note-on (velocity → FluidSynth noteon),
@@ -435,7 +440,10 @@ plugin.
   channels. Each NoteOn produces exactly one voice on the incoming MIDI
   channel.
 - Config keys: `soundfont_path`, `audio_driver`, `audio_device` (the
-  well-known pre-init keys). Other keys return `PLUGIN_NOT_IMPLEMENTED`.
+  well-known pre-init keys) and `attack_ms` (1–2000, default **1** = SF2
+  default = no change; raises the volume-envelope attack via the same
+  additive `GEN_VOLENVATTACK` offset mechanism as the harmonium plugin).
+  Other keys return `PLUGIN_NOT_IMPLEMENTED`.
 
 **Build**: mirrors the harmonium CMake structure exactly. Output:
 `build/plugins/libpiano_plugin.so` (59 KB). The SF2 path is compiled in via
@@ -453,7 +461,7 @@ Expected log excerpt:
 Loading plugin: ./build/plugins/libpiano_plugin.so
 Synth audio: driver=alsa device=default
 Synth voicing: gain=0.5 reverb=on chorus=off interp=4th-order
-Loaded SoundFont: .../plugins/piano/soundfonts/SalamanderGrandLite.sf2 (ID: 1)
+Loaded SoundFont: .../plugins/piano/soundfonts/GeneralUserGS.sf2 (ID: 1)
 Loaded plugin: piano v1.0.0 (./build/plugins/libpiano_plugin.so)
 Plugin: piano v1.0.0
 Starting audio...

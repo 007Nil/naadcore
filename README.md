@@ -14,7 +14,7 @@ naadcore-cli (MIDI input, event routing)
         ↓
 PluginManager → libharmonium_plugin.so  or  libpiano_plugin.so  (INaadPlugin)
         ↓
-Embedded FluidSynth + harmonium_v3.sf2  /  SalamanderGrandLite.sf2
+Embedded FluidSynth + harmonium_v3.sf2  /  GeneralUserGS.sf2
         ↓
 ALSA audio → speakers
 ```
@@ -147,9 +147,9 @@ cmake -B build -DHARMONIUM_SOUNDFONT_PATH=/path/to/other.sf2
 ### Piano
 
 The piano plugin loads from `plugins/piano/soundfonts/`. The default is
-`SalamanderGrandLite.sf2` (~184 MB, CC BY 3.0 — SF2 conversion of the
-Salamander Grand Piano V3 Lite, Yamaha C5). See
-`plugins/piano/soundfonts/README.md` for provenance. Override:
+`GeneralUserGS.sf2` (~30 MB, royalty-free — S. Christian Collins' GeneralUser
+GS 1.44). See `plugins/piano/soundfonts/README.md` for provenance and for why
+the previous Salamander conversion was replaced. Override:
 ```bash
 cmake -B build -DPIANO_SOUNDFONT_PATH=/path/to/other.sf2
 ```
@@ -229,8 +229,8 @@ naadcore/
 ├── plugins/piano/                  # Piano plugin
 │   ├── CMakeLists.txt              # Embeds PIANO_SOUNDFONT_PATH
 │   ├── soundfonts/
-│   │   ├── README.md               # Source + license (CC BY 3.0)
-│   │   └── SalamanderGrandLite.sf2  # ~184 MB, SF2 conversion of SFZ
+│   │   ├── README.md               # Source + license (royalty-free)
+│   │   └── GeneralUserGS.sf2       # ~30 MB, GM bank (preset 0 = grand piano)
 │   ├── piano_plugin.hpp
 │   └── piano_plugin.cpp
 ├── tests/                          # Realism test harness (T1–T7 tracks, render/capture

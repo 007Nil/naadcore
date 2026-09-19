@@ -18,8 +18,9 @@ The harmonium plugin provides a FluidSynth-based harmonium synthesizer with an e
 
 ### piano/
 The piano plugin provides a FluidSynth-based grand piano instrument using the
-Salamander Grand Piano Lite SoundFont (CC BY 3.0, SF2 format). Standard piano
-behavior: velocity-sensitive note-on, standard note-off, no harmonium-specific
+GeneralUser GS SoundFont (royalty-free, SF2 format, GM bank — preset 0 is the
+grand piano). Standard piano behavior: velocity-sensitive note-on, standard
+note-off, plus a tunable `attack_ms` config key. No harmonium-specific
 features.
 
 **Build Output**: `libpiano_plugin.so` in `build/plugins/`
